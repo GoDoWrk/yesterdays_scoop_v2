@@ -29,14 +29,14 @@ def load_user(username: str):
         return db.scalar(select(User).where(User.username == username, User.is_active.is_(True)))
 
 
-def require_user(request: Request):
+async def require_user(request: Request) -> User:
     try:
-        return manager(request)
+        return await manager(request)
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required") from exc
 
 
-def require_admin(current_user: User = Depends(require_user)) -> User:
+async def require_admin(current_user: User = Depends(require_user)) -> User:
     if not current_user.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return current_user
