@@ -112,11 +112,11 @@
     <article class="panel space-y-3">
       <p class="meta">Review and finish</p>
       <ul class="text-sm space-y-1 text-slate-300">
-        <li>Region: {{ settings.region }}</li>
-        <li>Local relevance preference: {{ settings.local_relevance_preference }}</li>
+        <li>Region: {{ settings.region if settings else 'global' }}</li>
+        <li>Local relevance preference: {{ settings.local_relevance_preference if settings else 'medium' }}</li>
         <li>Topics: {{ settings.topics|join(', ') if settings and settings.topics else 'none' }}</li>
-        <li>Source preset: {{ settings.source_preset }}</li>
-        <li>AI provider: {{ settings.llm_provider }}</li>
+        <li>Source preset: {{ settings.source_preset if settings else 'balanced' }}</li>
+        <li>AI provider: {{ settings.llm_provider if settings else 'ollama' }}</li>
         <li>Social context: {{ 'enabled' if settings and settings.enable_social_context else 'disabled' }}</li>
       </ul>
       <p class="text-sm text-slate-300">Finish setup to save these choices and launch onboarding.</p>

@@ -656,7 +656,8 @@ def setup_wizard(step: int, request: Request, db: Session = Depends(get_db)):
             run_migrations()
             settings = db.scalar(select(AppSetting).limit(1))
             admin_user = db.scalar(select(User).where(User.is_admin.is_(True)).limit(1))
-        except SQLAlchemyError as retry_exc:
+        except Exception as retry_exc:
+            db.rollback()
             logger.exception("Setup wizard still unavailable after migration retry: %s", retry_exc)
             settings = None
             admin_user = None
