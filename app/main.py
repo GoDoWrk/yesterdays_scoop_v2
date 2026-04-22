@@ -1,5 +1,6 @@
 from pathlib import Path
 import logging
+import inspect
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote_plus
 import urllib.parse
@@ -38,6 +39,14 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+
+def _template_response(request: Request, template_name: str, context: dict, status_code: int = 200) -> HTMLResponse:
+    safe_context = {str(key): value for key, value in context.items()}
+    params = list(inspect.signature(templates.TemplateResponse).parameters)
+    if params and params[0] == "request":
+        return templates.TemplateResponse(request, template_name, safe_context, status_code=status_code)
+    return templates.TemplateResponse(template_name, safe_context, status_code=status_code)
 
 
 def _relative_minutes(dt):
@@ -218,6 +227,7 @@ def login_page(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse("/setup/1", status_code=303)
     next_url = _safe_next_url(request.query_params.get("next"))
     return templates.TemplateResponse(
+        request,
         "login.html",
         {
             "request": request,
@@ -269,6 +279,7 @@ def homepage(request: Request, db: Session = Depends(get_db), current_user=Depen
     sections = _homepage_sections(db, region)
     hero = sections["top_story_now"][0] if sections["top_story_now"] else None
     return templates.TemplateResponse(
+        request,
         "home.html",
         {
             "request": request,
@@ -325,6 +336,7 @@ def cluster_detail(slug: str, request: Request, db: Session = Depends(get_db), c
     official_responses, public_reaction = split_social_sections(social_items)
     settings = db.scalar(select(AppSetting).limit(1))
     return templates.TemplateResponse(
+        request,
         "cluster_detail.html",
         {
             "request": request,
@@ -353,6 +365,7 @@ def search(q: str = "", request: Request = None, db: Session = Depends(get_db), 
             logger.warning("Search failed due to Meilisearch error: %s", exc)
             results = {"clusters": [], "articles": []}
     return templates.TemplateResponse(
+        request,
         "search.html",
         {
             "request": request,
@@ -368,7 +381,7 @@ def search(q: str = "", request: Request = None, db: Session = Depends(get_db), 
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request, db: Session = Depends(get_db), current_user=Depends(require_admin)):
     settings = db.scalar(select(AppSetting).limit(1))
-    return templates.TemplateResponse("settings.html", {"request": request, "settings": settings, "title": "Settings", "current_user": current_user, "bootstrap_pending": not bool(settings and settings.miniflux_bootstrap_completed)})
+    return templates.TemplateResponse(request, "settings.html", {"request": request, "settings": settings, "title": "Settings", "current_user": current_user, "bootstrap_pending": not bool(settings and settings.miniflux_bootstrap_completed)})
 
 
 @app.get("/ai", response_class=HTMLResponse)
@@ -378,6 +391,7 @@ def ai_config_page(request: Request, db: Session = Depends(get_db), current_user
     models = llm.list_ollama_models()
     ollama_connected = llm.ollama_health()
     return templates.TemplateResponse(
+        request,
         "ai_config.html",
         {
             "request": request,
@@ -439,6 +453,7 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db), current_use
     health_status = health()
     metrics = _dashboard_metrics(db)
     return templates.TemplateResponse(
+        request,
         "admin_dashboard.html",
         {
             "request": request,
@@ -503,6 +518,7 @@ def admin_retry_bootstrap(_: object = Depends(require_admin)):
 def backups_page(request: Request, db: Session = Depends(get_db), current_user=Depends(require_admin)):
     settings = db.scalar(select(AppSetting).limit(1))
     return templates.TemplateResponse(
+        request,
         "backups.html",
         {
             "request": request,
@@ -563,6 +579,7 @@ def sources_page(request: Request, db: Session = Depends(get_db), current_user=D
     source_by_url = {s.feed_url: s for s in source_rows}
     settings = db.scalar(select(AppSetting).limit(1))
     return templates.TemplateResponse(
+        request,
         "sources.html",
         {
             "request": request,
@@ -660,42 +677,47 @@ def export_opml(_: object = Depends(require_admin)):
 
 @app.get("/setup/{step}", response_class=HTMLResponse)
 def setup_wizard(step: int, request: Request, db: Session = Depends(get_db)):
-    setup_load_error = None
     try:
-        settings = db.scalar(select(AppSetting).limit(1))
-        admin_user = db.scalar(select(User).where(User.is_admin.is_(True)).limit(1))
-    except SQLAlchemyError as exc:
-        db.rollback()
-        logger.warning("Setup wizard query failed; attempting on-demand migrations: %s", exc)
+        setup_load_error = None
         try:
-            run_migrations()
             settings = db.scalar(select(AppSetting).limit(1))
             admin_user = db.scalar(select(User).where(User.is_admin.is_(True)).limit(1))
-        except Exception as retry_exc:
+        except SQLAlchemyError as exc:
             db.rollback()
-            logger.exception("Setup wizard still unavailable after migration retry: %s", retry_exc)
-            settings = None
+            logger.warning("Setup wizard query failed; attempting on-demand migrations: %s", exc)
+            try:
+                run_migrations()
+                settings = db.scalar(select(AppSetting).limit(1))
+                admin_user = db.scalar(select(User).where(User.is_admin.is_(True)).limit(1))
+            except Exception as retry_exc:
+                db.rollback()
+                logger.exception("Setup wizard still unavailable after migration retry: %s", retry_exc)
+                settings = None
+                admin_user = None
+                setup_load_error = "Could not load setup data. Verify database migrations and connectivity."
+
+        if inspect.isawaitable(admin_user):
+            logger.error("Setup wizard received coroutine for admin_user; coercing to None")
             admin_user = None
-            setup_load_error = "Could not load setup data. Verify database migrations and connectivity."
 
-    if settings and settings.setup_completed:
-        return RedirectResponse("/login?next=/onboarding", status_code=303)
+        if settings and settings.setup_completed:
+            return RedirectResponse("/login?next=/onboarding", status_code=303)
 
-    try:
-        service_health = health()
-    except Exception as exc:  # defensive fallback for setup UX
-        logger.warning("Health check failed during setup wizard render: %s", exc)
-        service_health = {"database": False, "miniflux": False, "meilisearch": False, "ollama": False, "worker_healthy": False, "scheduler_healthy": False}
+        try:
+            service_health = health()
+        except Exception as exc:  # defensive fallback for setup UX
+            logger.warning("Health check failed during setup wizard render: %s", exc)
+            service_health = {"database": False, "miniflux": False, "meilisearch": False, "ollama": False, "worker_healthy": False, "scheduler_healthy": False}
 
-    checks = _wizard_checks(service_health)
-    step = max(1, min(step, 8))
-    if settings:
-        settings.setup_last_step = max(settings.setup_last_step or 1, step)
-        db.commit()
+        checks = _wizard_checks(service_health)
+        step = max(1, min(step, 8))
+        if settings:
+            settings.setup_last_step = max(settings.setup_last_step or 1, step)
+            db.commit()
+        else:
+            setup_load_error = setup_load_error or "Settings are not initialized yet. Continue setup to create defaults."
 
-    return templates.TemplateResponse(
-        name="setup_wizard.html",
-        context={
+        context = {
             "request": request,
             "title": "Setup Wizard",
             "step": step,
@@ -705,8 +727,28 @@ def setup_wizard(step: int, request: Request, db: Session = Depends(get_db)):
             "error": request.query_params.get("error") or setup_load_error,
             "ok": request.query_params.get("ok"),
             "connection_ok": request.query_params.get("connection_ok"),
-        },
-    )
+        }
+        if not all(isinstance(key, str) for key in context.keys()):
+            logger.error("Setup wizard context had non-string keys: %s", [type(key).__name__ for key in context.keys()])
+            context = {str(key): value for key, value in context.items()}
+
+        logger.debug(
+            "Rendering setup wizard step=%s settings_present=%s admin_user_type=%s",
+            step,
+            bool(settings),
+            type(admin_user).__name__ if admin_user is not None else "None",
+        )
+        return _template_response(request, "setup_wizard.html", context)
+    except Exception:
+        logger.exception("Unhandled error while rendering /setup/%s", step)
+        fallback = (
+            "<!doctype html><html><body>"
+            "<h1>Setup temporarily unavailable</h1>"
+            "<p>We hit an unexpected error while rendering the setup wizard.</p>"
+            "<p>Please check server logs and retry /setup/1.</p>"
+            "</body></html>"
+        )
+        return HTMLResponse(content=fallback, status_code=200)
 
 
 def _wizard_checks(service_health: dict) -> dict[str, dict[str, str]]:
@@ -728,6 +770,7 @@ def onboarding_page(request: Request, db: Session = Depends(get_db), current_use
         return RedirectResponse("/setup/1", status_code=303)
     settings = db.scalar(select(AppSetting).limit(1))
     return templates.TemplateResponse(
+        request,
         "setup_complete.html",
         {
             "request": request,

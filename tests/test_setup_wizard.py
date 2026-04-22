@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import app.main as main
+from starlette.requests import Request
 
 
 class DummyDB:
@@ -53,3 +54,53 @@ def test_setup_step3_creates_admin_for_first_run(monkeypatch):
     assert len(db.added) == 1
     assert db.added[0].username == "owner"
     assert db.added[0].hashed_password == "hashed::supersecret"
+
+
+def test_setup_wizard_renders_step_one_template_without_crashing(monkeypatch):
+    settings = SimpleNamespace(setup_completed=False, setup_last_step=1)
+    db = DummyDB(settings=settings, admin_user=None)
+    monkeypatch.setattr(main, "health", lambda: {"database": True})
+
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "GET",
+        "path": "/setup/1",
+        "raw_path": b"/setup/1",
+        "query_string": b"",
+        "headers": [],
+        "client": ("testclient", 123),
+        "server": ("testserver", 80),
+        "scheme": "http",
+    }
+    request = Request(scope)
+
+    response = main.setup_wizard(step=1, request=request, db=db)
+
+    assert response.status_code == 200
+
+
+def test_setup_wizard_returns_fallback_html_when_render_fails(monkeypatch):
+    settings = SimpleNamespace(setup_completed=False, setup_last_step=1)
+    db = DummyDB(settings=settings, admin_user=None)
+    monkeypatch.setattr(main, "health", lambda: {"database": True})
+    monkeypatch.setattr(main, "_template_response", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "GET",
+        "path": "/setup/1",
+        "raw_path": b"/setup/1",
+        "query_string": b"",
+        "headers": [],
+        "client": ("testclient", 123),
+        "server": ("testserver", 80),
+        "scheme": "http",
+    }
+    request = Request(scope)
+
+    response = main.setup_wizard(step=1, request=request, db=db)
+
+    assert response.status_code == 200
+    assert "Setup temporarily unavailable" in response.body.decode("utf-8")

@@ -1,3 +1,5 @@
+import inspect
+
 from fastapi import Depends, HTTPException, Request, status
 from fastapi_login import LoginManager
 from passlib.context import CryptContext
@@ -36,7 +38,9 @@ async def require_user(request: Request) -> User:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required") from exc
 
 
-def require_admin(current_user: User = Depends(require_user)) -> User:
+async def require_admin(current_user: User = Depends(require_user)) -> User:
+    if inspect.isawaitable(current_user):
+        current_user = await current_user
     if not current_user.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return current_user
