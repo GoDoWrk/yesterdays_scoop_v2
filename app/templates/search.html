@@ -2,22 +2,29 @@
 {% block content %}
 <section>
   <form method="get" class="mb-6 flex gap-3">
-    <input name="q" value="{{ q }}" placeholder="Search stories and articles" class="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3" />
+    <input name="q" value="{{ q }}" placeholder="Search stories, entities, and source reporting" class="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3" />
     <button class="pill">Search</button>
   </form>
 
-  <h2 class="text-xl font-semibold">Story clusters <span class="help-tip">Clusters group many related articles into one evolving story.</span></h2>
+  {% if results.fallback_reason %}
+  <p class="mb-4 text-sm text-amber-300">{{ results.fallback_reason }}</p>
+  {% endif %}
+
+  <h2 class="text-xl font-semibold">Story clusters</h2>
   <div class="mt-3 grid gap-4 md:grid-cols-2">
     {% for hit in results.clusters %}
       <article class="cluster-card">
         <h3 class="text-lg font-medium">{{ hit.title }}</h3>
-        <p class="mt-2 text-sm text-slate-300">{{ hit.ai_summary or hit.why_it_matters or '' }}</p>
+        <p class="mt-1 text-xs text-slate-400">Cluster score {{ '%.2f'|format(hit.score or 0) }}{% if hit.importance_score %} · Importance {{ '%.2f'|format(hit.importance_score or 0) }}{% endif %}</p>
+        <p class="mt-2 text-sm text-slate-300">{{ hit.ai_summary or hit.why_it_matters or 'No concise synthesis available yet.' }}</p>
         <a href="/clusters/{{ hit.slug }}" class="mt-4 inline-flex text-sm text-indigo-300">Open cluster →</a>
       </article>
+    {% else %}
+      {% if q %}<p class="text-sm text-slate-400">No matching clusters found.</p>{% endif %}
     {% endfor %}
   </div>
 
-  <h2 class="mt-8 text-xl font-semibold">Articles</h2>
+  <h2 class="mt-8 text-xl font-semibold">Related articles</h2>
   <div class="mt-3 grid gap-4">
     {% for hit in results.articles %}
       <article class="cluster-card">
@@ -25,6 +32,8 @@
         <p class="mt-1 text-sm text-slate-300">{{ hit.source_name }} · {{ hit.published_at }}</p>
         <a href="{{ hit.url }}" class="mt-3 inline-flex text-sm text-indigo-300">Read source →</a>
       </article>
+    {% else %}
+      {% if q %}<p class="text-sm text-slate-400">No matching articles found.</p>{% endif %}
     {% endfor %}
   </div>
 </section>

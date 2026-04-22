@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import logging
+import xml.etree.ElementTree as ET
+from urllib.parse import urlparse
 from dataclasses import dataclass
 from datetime import datetime
 import time
@@ -58,6 +60,16 @@ class MinifluxClient:
         token = base64.b64encode(f"{self.admin_username}:{self.admin_password}".encode("utf-8")).decode("utf-8")
         headers["Authorization"] = f"Basic {token}"
         return headers
+
+
+    def _headers_without_content_type(self) -> dict[str, str]:
+        headers = self._headers().copy()
+        headers.pop("Content-Type", None)
+        return headers
+
+    def validate_feed_url(self, feed_url: str) -> bool:
+        parsed = urlparse((feed_url or "").strip())
+        return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
     def health(self) -> bool:
         try:
@@ -271,7 +283,7 @@ class MinifluxClient:
             )
         return feeds
 
-    def add_feed(self, *, feed_url: str, category_title: str = "Yesterday's Scoop") -> dict:
+    def add_feed(self, *, feed_url: str, category_title: str = "Yesterday's Scoop", title: str | None = None) -> dict:
         with httpx.Client(timeout=self.timeout) as client:
             categories_res = client.get(f"{self.base_url}/v1/categories", headers=self._headers())
             categories_res.raise_for_status()
@@ -290,10 +302,12 @@ class MinifluxClient:
                 create_cat.raise_for_status()
                 category_id = create_cat.json()["id"]
 
+            if not self.validate_feed_url(feed_url):
+                raise ValueError("invalid_feed_url")
             add = client.post(
                 f"{self.base_url}/v1/feeds",
                 headers=self._headers(),
-                json={"feed_url": feed_url, "category_id": category_id},
+                json={"feed_url": feed_url, "category_id": category_id, "title": title},
             )
             if add.status_code not in (201, 409):
                 add.raise_for_status()
@@ -314,15 +328,68 @@ class MinifluxClient:
             )
             res.raise_for_status()
 
-    def import_opml(self, opml_text: str) -> None:
+    def parse_opml_urls(self, opml_text: str) -> list[tuple[str, str | None]]:
+        root = ET.fromstring(opml_text)
+        urls: list[tuple[str, str | None]] = []
+        for outline in root.findall(".//outline"):
+            xml_url = (outline.attrib.get("xmlUrl") or outline.attrib.get("xmlurl") or "").strip()
+            title = (outline.attrib.get("title") or outline.attrib.get("text") or "").strip() or None
+            if not xml_url:
+                continue
+            if not self.validate_feed_url(xml_url):
+                continue
+            urls.append((xml_url, title))
+        # dedupe while preserving order
+        seen = set()
+        deduped = []
+        for url, title in urls:
+            if url in seen:
+                continue
+            seen.add(url)
+            deduped.append((url, title))
+        return deduped
+
+    def import_opml(self, opml_text: str) -> dict:
+        parsed = self.parse_opml_urls(opml_text)
+        if not parsed:
+            return {"created": 0, "skipped": 0, "invalid": 0}
+
+        created = 0
+        skipped = 0
+        invalid = 0
+
         with httpx.Client(timeout=self.timeout) as client:
-            res = client.post(
-                f"{self.base_url}/v1/feeds/import",
-                headers=self._headers(),
-                files={"file": ("sources.opml", opml_text, "text/xml")},
-            )
-            if res.status_code not in (200, 201):
-                res.raise_for_status()
+            # Preferred path: native Miniflux OPML import endpoint.
+            try:
+                res = client.post(
+                    f"{self.base_url}/v1/feeds/import",
+                    headers=self._headers_without_content_type(),
+                    files={"file": ("sources.opml", opml_text, "text/xml")},
+                )
+                if res.status_code in (200, 201):
+                    payload = res.json() if res.content else {}
+                    return {
+                        "created": int(payload.get("created", len(parsed))),
+                        "skipped": int(payload.get("existing", 0)),
+                        "invalid": int(payload.get("invalid", 0)),
+                    }
+            except Exception:
+                logger.warning("Native OPML import failed, falling back to per-feed ingestion")
+
+        # Fallback path for resilience at large import sizes.
+        for feed_url, title in parsed:
+            try:
+                result = self.add_feed(feed_url=feed_url, title=title)
+                if result.get("created"):
+                    created += 1
+                else:
+                    skipped += 1
+            except ValueError:
+                invalid += 1
+            except Exception:
+                skipped += 1
+
+        return {"created": created, "skipped": skipped, "invalid": invalid}
 
     def export_opml(self) -> str:
         with httpx.Client(timeout=self.timeout) as client:

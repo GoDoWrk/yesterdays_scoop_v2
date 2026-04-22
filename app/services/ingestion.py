@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models import AppSetting, Article, Cluster, Source
 from app.services.miniflux_client import MinifluxClient
-from app.services.source_catalog import default_poll_frequency_for_tier, seed_source_registry, source_family
+from app.services.source_catalog import default_poll_frequency_for_source, default_poll_frequency_for_tier, infer_source_metadata, seed_source_registry, source_family
 from app.services.text import normalize_url, tokenize
 
 logger = logging.getLogger(__name__)
@@ -245,28 +245,40 @@ def _sync_sources_from_miniflux(db: Session, feeds: list) -> None:
             source.homepage_url = feed.site_url
             source.miniflux_feed_id = feed.id
             source.enabled = not feed.disabled
+            meta = infer_source_metadata(feed.title, feed.feed_url)
             if not source.source_tier:
-                source.source_tier = 3
+                source.source_tier = int(meta["tier"])
+            if not source.source_type:
+                source.source_type = str(meta["source_type"])
+            if not source.topic:
+                source.topic = str(meta["topic"])
+            if not source.geography:
+                source.geography = str(meta["geography"])
             if not source.poll_frequency_minutes:
-                source.poll_frequency_minutes = default_poll_frequency_for_tier(source.source_tier)
+                source.poll_frequency_minutes = default_poll_frequency_for_source(source_type=source.source_type, tier=source.source_tier)
             if not source.outlet_family:
                 source.outlet_family = source_family(feed.title)
             continue
-        tier_guess = 3
+        meta = infer_source_metadata(feed.title, feed.feed_url)
+        tier_guess = int(meta["tier"])
         src = Source(
             name=feed.title,
             feed_url=feed.feed_url,
             homepage_url=feed.site_url,
             miniflux_feed_id=feed.id,
             source_tier=tier_guess,
-            priority_weight=1.0,
-            poll_frequency_minutes=default_poll_frequency_for_tier(tier_guess),
+            priority_weight=float(meta["weight"]),
+            poll_frequency_minutes=default_poll_frequency_for_source(source_type=str(meta["source_type"]), tier=tier_guess),
             enabled=not feed.disabled,
             health_status="unknown",
             failure_count=0,
             average_latency_ms=0.0,
             outlet_family=source_family(feed.title),
-            weight=1.0,
+            weight=float(meta["weight"]),
+            source_type=str(meta["source_type"]),
+            topic=str(meta["topic"]),
+            geography=str(meta["geography"]),
+            region=str(meta["geography"]),
         )
         db.add(src)
     db.commit()

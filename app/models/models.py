@@ -38,6 +38,9 @@ class Source(Base):
     outlet_family: Mapped[str | None] = mapped_column(String(128))
     weight: Mapped[float] = mapped_column(Float, default=1.0)
     region: Mapped[str] = mapped_column(String(128), default="global")
+    source_type: Mapped[str] = mapped_column(String(32), default="major_outlet")
+    topic: Mapped[str] = mapped_column(String(64), default="general")
+    geography: Mapped[str] = mapped_column(String(64), default="global")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

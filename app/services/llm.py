@@ -17,7 +17,13 @@ logger = logging.getLogger(__name__)
 PROMPT = """You are summarizing one evolving news cluster.
 Return strict JSON with keys:
 cluster_title, summary, why_it_matters, what_changed (array), key_entities (array), representative_url, source_urls (array).
-Keep it factual, concise, and family-safe.
+Rules:
+- summary must be factual and 2-3 sentences.
+- why_it_matters must explain concrete consequences, not generic filler.
+- what_changed must contain only meaningful deltas, not a rewrite of summary.
+- If evidence is weak for a field, return an empty string or empty array for that field.
+- Never invent official/public responses.
+Keep output concise, factual, and family-safe.
 """
 
 

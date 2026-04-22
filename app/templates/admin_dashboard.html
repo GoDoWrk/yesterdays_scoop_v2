@@ -1,6 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="space-y-6">
+  {% if queue_ok %}
+  <div class="rounded-xl border border-emerald-700/40 bg-emerald-900/20 px-4 py-3 text-sm text-emerald-200">{{ queue_ok }}</div>
+  {% endif %}
+  {% if queue_error %}
+  <div class="rounded-xl border border-rose-700/40 bg-rose-900/20 px-4 py-3 text-sm text-rose-200">Queue dispatch failed: {{ queue_error }}</div>
+  {% endif %}
+
   <div class="flex items-center justify-between gap-4">
     <div>
       <h1 class="text-3xl font-semibold">Admin Health Dashboard</h1>
@@ -67,6 +74,23 @@
     <div class="mt-4 flex flex-wrap gap-3 text-sm">
       <a class="text-indigo-300" href="/health">Open raw health endpoint</a>
       <span class="text-slate-400">Logs: <code>docker compose logs -f web worker beat miniflux</code></span>
+    </div>
+  </article>
+
+  
+  <article class="panel">
+    <p class="meta">Enrichment observability</p>
+    <div class="mt-3 space-y-2 text-sm">
+      {% for event in recent_enrichment %}
+      <div class="rounded-lg border border-slate-800 px-3 py-2">
+        <p class="text-slate-200">Cluster {{ event.cluster_id }} · {{ event.details.get('stage', 'unknown') }}{% if event.details.get('reason') %} · <span class="text-amber-300">{{ event.details.get('reason') }}</span>{% endif %}</p>
+        {% if event.details.get('evidence') %}
+        <p class="text-slate-400">Evidence: {{ event.details.get('evidence') }}</p>
+        {% endif %}
+      </div>
+      {% else %}
+      <p class="text-slate-400">No enrichment lifecycle events recorded yet.</p>
+      {% endfor %}
     </div>
   </article>
 
