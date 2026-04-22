@@ -657,8 +657,8 @@ def setup_wizard(step: int, request: Request, db: Session = Depends(get_db)):
         db.commit()
 
     return templates.TemplateResponse(
-        "setup_wizard.html",
-        {
+        name="setup_wizard.html",
+        context={
             "request": request,
             "title": "Setup Wizard",
             "step": step,

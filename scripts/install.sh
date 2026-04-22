@@ -31,6 +31,23 @@ MSG
   fi
 }
 
+require_writable_dir() {
+  local path="$1"
+  if ! mkdir -p "$path" >/dev/null 2>&1; then
+    echo "[error] Unable to create directory: $path"
+    echo "        Choose a writable path for your current user or re-run with appropriate permissions."
+    exit 1
+  fi
+
+  local probe="$path/.ys_write_test.$$"
+  if ! ( : >"$probe" ) >/dev/null 2>&1; then
+    echo "[error] Directory is not writable by user $(id -un): $path"
+    echo "        Choose a writable path (for example under \$HOME or mounted media with write permissions)."
+    exit 1
+  fi
+  rm -f "$probe"
+}
+
 prompt() {
   local var_name="$1"; shift
   local label="$1"; shift
@@ -72,7 +89,7 @@ echo "== Yesterday's Scoop installer (Linux) =="
 require_docker
 
 DEFAULT_INSTALL_DIR="$HOME/yesterdays-scoop"
-DEFAULT_DATA_ROOT="/srv/yesterdays-scoop"
+DEFAULT_DATA_ROOT="$HOME/yesterdays-scoop-data"
 DEFAULT_APP_PORT="8000"
 DEFAULT_MINIFLUX_PORT="8080"
 DEFAULT_MEILI_PORT="7700"
@@ -96,7 +113,8 @@ if [[ -z "$ADMIN_PASS" || -z "$AUTH_SECRET" || -z "$APP_DB_PASSWORD" || -z "$MIN
   exit 1
 fi
 
-mkdir -p "$INSTALL_DIR"
+require_writable_dir "$INSTALL_DIR"
+require_writable_dir "$DATA_ROOT"
 mkdir -p "$DATA_ROOT"/{app_db,miniflux_db,redis,meili,ollama}
 
 if [[ "$INSTALL_DIR" != "$REPO_ROOT" ]]; then
