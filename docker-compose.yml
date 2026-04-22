@@ -13,9 +13,9 @@ services:
       redis:
         condition: service_started
       miniflux:
-        condition: service_healthy
+        condition: service_started
       meilisearch:
-        condition: service_healthy
+        condition: service_started
     ports:
       - "${YS_WEB_PORT:-8000}:8000"
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
@@ -33,9 +33,9 @@ services:
       redis:
         condition: service_started
       miniflux:
-        condition: service_healthy
+        condition: service_started
       meilisearch:
-        condition: service_healthy
+        condition: service_started
     command: celery -A app.tasks.celery_app.celery_app worker --loglevel=INFO
     restart: unless-stopped
 
@@ -90,6 +90,7 @@ services:
     restart: unless-stopped
 
   miniflux:
+    # NOTE: Some upstream images do not include wget/curl, so keep startup dependency at service_started.
     image: miniflux/miniflux:latest
     depends_on:
       miniflux_db:
@@ -102,14 +103,10 @@ services:
       ADMIN_PASSWORD: ${MINIFLUX_ADMIN_PASSWORD:-admin123}
     ports:
       - "${YS_MINIFLUX_PORT:-8080}:8080"
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/v1/healthcheck"]
-      interval: 15s
-      timeout: 5s
-      retries: 12
     restart: unless-stopped
 
   meilisearch:
+    # NOTE: Keep startup dependency at service_started to avoid false-unhealthy install failures.
     image: getmeili/meilisearch:v1.12
     environment:
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-masterKey}
@@ -117,11 +114,6 @@ services:
       - ${YS_DATA_ROOT:-./data}/meili:/meili_data
     ports:
       - "${YS_MEILI_PORT:-7700}:7700"
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:7700/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 12
     restart: unless-stopped
 
   ollama:

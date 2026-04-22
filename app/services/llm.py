@@ -109,9 +109,9 @@ class LLMService:
 
     def __init__(self) -> None:
         self.settings = get_settings()
-        overrides = get_runtime_overrides()
-        self.provider_name = overrides.get("llm_provider") or self.settings.llm_provider
-        self.fallback_enabled = bool(overrides.get("openai_fallback_enabled", True))
+        self.overrides = get_runtime_overrides()
+        self.provider_name = self.overrides.get("llm_provider") or self.settings.llm_provider
+        self.fallback_enabled = bool(self.overrides.get("openai_fallback_enabled", True))
         self.primary = self._build_provider(self.provider_name)
         self.fallback = self._build_fallback_provider()
 
@@ -151,8 +151,9 @@ class LLMService:
 
     def _build_provider(self, provider_name: str) -> LLMProvider:
         if provider_name == "openai":
-            if not self.settings.openai_api_key:
-                logger.warning("LLM_PROVIDER=openai but OPENAI_API_KEY is missing; falling back to Ollama.")
+            openai_key = self.overrides.get("openai_api_key") or self.settings.openai_api_key
+            if not openai_key:
+                logger.warning("LLM provider is set to openai but no OpenAI key is configured; falling back to Ollama.")
                 return OllamaProvider()
             return OpenAIProvider()
         return OllamaProvider()
@@ -162,7 +163,7 @@ class LLMService:
             return None
         if not self.fallback_enabled:
             return None
-        if not self.settings.openai_api_key:
+        if not (self.overrides.get("openai_api_key") or self.settings.openai_api_key):
             return None
         try:
             return OpenAIProvider()
@@ -172,7 +173,8 @@ class LLMService:
     def ollama_health(self) -> bool:
         try:
             with httpx.Client(timeout=10.0) as client:
-                res = client.get(f"{self.settings.ollama_base_url.rstrip('/')}/api/tags")
+                base_url = (self.overrides.get("ollama_base_url") or self.settings.ollama_base_url).rstrip("/")
+                res = client.get(f"{base_url}/api/tags")
                 return res.status_code == 200
         except Exception:
             return False
