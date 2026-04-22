@@ -1,6 +1,7 @@
 from pathlib import Path
 import logging
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote_plus
 
 import json
 
@@ -15,7 +16,7 @@ from app.core.logging import configure_logging
 from app.db.migrations import run_migrations
 from app.db.session import engine, get_db
 from app.models import AppSetting, Article, Cluster, ServiceState, SocialItem, Source, User
-from app.services.auth import hash_password, require_admin, require_user
+from app.services.auth import authenticate_user, hash_password, manager, require_admin, require_user
 from app.services.backup_restore import BackupValidationError, backup_bytes, restore_backup
 from app.services.bootstrap import bootstrap_data
 from app.services.llm import LLMService
@@ -174,6 +175,53 @@ def _dashboard_metrics(db: Session) -> dict:
 def _is_setup_completed(db: Session) -> bool:
     settings = db.scalar(select(AppSetting).limit(1))
     return bool(settings and settings.setup_completed)
+
+
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request, db: Session = Depends(get_db)):
+    if not _is_setup_completed(db):
+        return RedirectResponse("/setup/1", status_code=303)
+    next_url = request.query_params.get("next") or "/"
+    return templates.TemplateResponse(
+        "login.html",
+        {
+            "request": request,
+            "title": "Sign in",
+            "error": request.query_params.get("error"),
+            "next": next_url,
+            "current_user": None,
+            "bootstrap_pending": False,
+        },
+    )
+
+
+@app.post("/login")
+def login_submit(
+    db: Session = Depends(get_db),
+    username: str = Form(""),
+    password: str = Form(""),
+    next_url: str = Form("/"),
+):
+    user = authenticate_user(db, username=username.strip(), password=password)
+    if not user:
+        return RedirectResponse(
+            f"/login?error=Invalid+username+or+password&next={quote_plus(next_url or '/')}",
+            status_code=303,
+        )
+
+    token = manager.create_access_token(data={"sub": user.username})
+    response = RedirectResponse(next_url or "/", status_code=303)
+    manager.set_cookie(response, token)
+    return response
+
+
+@app.post("/logout")
+def logout_submit():
+    response = RedirectResponse("/login?ok=Logged+out", status_code=303)
+    response.delete_cookie(manager.cookie_name)
+    return response
 
 
 
@@ -580,7 +628,7 @@ def export_opml(_: object = Depends(require_admin)):
 def setup_wizard(step: int, request: Request, db: Session = Depends(get_db)):
     settings = db.scalar(select(AppSetting).limit(1))
     if settings and settings.setup_completed:
-        return RedirectResponse("/onboarding", status_code=303)
+        return RedirectResponse("/login?next=/onboarding", status_code=303)
 
     admin_user = db.scalar(select(User).where(User.is_admin.is_(True)).limit(1))
     service_health = health()
