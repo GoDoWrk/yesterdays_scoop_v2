@@ -179,13 +179,13 @@ def _safe_next_url(next_url: str | None) -> str:
     if not candidate:
         return "/"
 
-    parts = urllib.parse.urlsplit(candidate)
+    parts = urlsplit(candidate)
     if parts.scheme or parts.netloc:
         return "/"
     if not parts.path.startswith("/") or parts.path.startswith("//"):
         return "/"
 
-    return urllib.parse.urlunsplit(("", "", parts.path, parts.query, ""))
+    return urlunsplit(("", "", parts.path, parts.query, ""))
 
 
 
