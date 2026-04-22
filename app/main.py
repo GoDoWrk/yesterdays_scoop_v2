@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import desc, func, select, text
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.logging import configure_logging
 from app.db.migrations import run_migrations
@@ -644,12 +645,32 @@ def export_opml(_: object = Depends(require_admin)):
 
 @app.get("/setup/{step}", response_class=HTMLResponse)
 def setup_wizard(step: int, request: Request, db: Session = Depends(get_db)):
-    settings = db.scalar(select(AppSetting).limit(1))
+    setup_load_error = None
+    try:
+        settings = db.scalar(select(AppSetting).limit(1))
+        admin_user = db.scalar(select(User).where(User.is_admin.is_(True)).limit(1))
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.warning("Setup wizard query failed; attempting on-demand migrations: %s", exc)
+        try:
+            run_migrations()
+            settings = db.scalar(select(AppSetting).limit(1))
+            admin_user = db.scalar(select(User).where(User.is_admin.is_(True)).limit(1))
+        except SQLAlchemyError as retry_exc:
+            logger.exception("Setup wizard still unavailable after migration retry: %s", retry_exc)
+            settings = None
+            admin_user = None
+            setup_load_error = "Could not load setup data. Verify database migrations and connectivity."
+
     if settings and settings.setup_completed:
         return RedirectResponse("/login?next=/onboarding", status_code=303)
 
-    admin_user = db.scalar(select(User).where(User.is_admin.is_(True)).limit(1))
-    service_health = health()
+    try:
+        service_health = health()
+    except Exception as exc:  # defensive fallback for setup UX
+        logger.warning("Health check failed during setup wizard render: %s", exc)
+        service_health = {"database": False, "miniflux": False, "meilisearch": False, "ollama": False, "worker_healthy": False, "scheduler_healthy": False}
+
     checks = _wizard_checks(service_health)
     step = max(1, min(step, 8))
     if settings:
@@ -665,7 +686,7 @@ def setup_wizard(step: int, request: Request, db: Session = Depends(get_db)):
             "settings": settings,
             "admin_user": admin_user,
             "checks": checks,
-            "error": request.query_params.get("error"),
+            "error": request.query_params.get("error") or setup_load_error,
             "ok": request.query_params.get("ok"),
             "connection_ok": request.query_params.get("connection_ok"),
         },
