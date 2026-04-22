@@ -17,12 +17,12 @@ logger = logging.getLogger(__name__)
 
 def bootstrap_data(db: Session) -> None:
     app_settings = ensure_app_settings(db)
+    _ensure_default_admin(db)
 
     if not app_settings.setup_completed:
         logger.info("Setup wizard incomplete; skipping automatic admin/bootstrap actions.")
         return
 
-    _ensure_default_admin(db)
     seed_source_registry(db)
     attempt_miniflux_bootstrap(db, app_settings=app_settings, reason="startup")
 

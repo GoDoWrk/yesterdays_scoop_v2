@@ -20,9 +20,9 @@ from app.core.logging import configure_logging
 from app.db.migrations import run_migrations
 from app.db.session import engine, get_db
 from app.models import AppSetting, Article, Cluster, ServiceState, SocialItem, Source, User
-from app.services.auth import authenticate_user, hash_password, manager, require_admin, require_user
+from app.services.auth import authenticate_user, hash_password, manager, require_admin, require_user, verify_password
 from app.services.backup_restore import BackupValidationError, backup_bytes, restore_backup
-from app.services.bootstrap import bootstrap_data
+from app.services.bootstrap import bootstrap_data, ensure_app_settings
 from app.services.llm import LLMService
 from app.services.ingestion import _sync_sources_from_miniflux
 from app.services.meili import MeiliService
@@ -74,14 +74,14 @@ def startup() -> None:
         run_migrations()
     except Exception as exc:
         logger.exception("Startup migration step failed: %s", exc)
-        raise
+        return
 
     try:
         with Session(engine) as db:
+            ensure_app_settings(db)
             bootstrap_data(db)
     except Exception as exc:
         logger.exception("Startup bootstrap step failed: %s", exc)
-        raise
 
     meili = MeiliService()
     try:
@@ -94,6 +94,7 @@ def startup() -> None:
 def health() -> dict:
     status = {
         "status": "ok",
+        "degraded_reasons": [],
         "database": False,
         "miniflux": False,
         "miniflux_bootstrapped": False,
@@ -116,11 +117,14 @@ def health() -> dict:
         status["database"] = True
     except Exception:
         status["database"] = False
+        status["degraded_reasons"].append("database_unreachable")
 
     try:
         status["miniflux"] = MinifluxClient().health()
     except Exception:
         status["miniflux"] = False
+    if not status["miniflux"]:
+        status["degraded_reasons"].append("miniflux_unreachable")
 
     try:
         with Session(engine) as db:
@@ -144,23 +148,36 @@ def health() -> dict:
                     status["worker_healthy"] = worker_age <= 180
     except Exception:
         status["miniflux_bootstrapped"] = False
+        status["degraded_reasons"].append("app_settings_unavailable")
 
     try:
         status["meilisearch"] = MeiliService().health()
     except Exception:
         status["meilisearch"] = False
+    if not status["meilisearch"]:
+        status["degraded_reasons"].append("meilisearch_unreachable")
 
     try:
         status["ollama"] = LLMService().ollama_health()
     except Exception:
         status["ollama"] = False
+    if not status["ollama"]:
+        status["degraded_reasons"].append("ollama_unreachable")
 
     try:
         inspector = celery_app.control.inspect(timeout=1.0)
         ping_result = inspector.ping() or {}
-        status["worker_healthy"] = status["worker_healthy"] and bool(ping_result)
+        status["worker_healthy"] = status["worker_healthy"] or bool(ping_result)
     except Exception:
-        status["worker_healthy"] = False
+        status["worker_healthy"] = bool(status["worker_healthy"])
+    if not status["worker_healthy"]:
+        status["degraded_reasons"].append("worker_unhealthy")
+    if not status["scheduler_healthy"]:
+        status["degraded_reasons"].append("scheduler_unhealthy")
+    if not status["miniflux_bootstrapped"]:
+        status["degraded_reasons"].append("miniflux_not_bootstrapped")
+
+    status["degraded_reasons"] = sorted(set(status["degraded_reasons"]))
 
     if not all([status["database"], status["miniflux"], status["miniflux_bootstrapped"], status["meilisearch"], status["ollama"], status["scheduler_healthy"], status["worker_healthy"]]):
         status["status"] = "degraded"
@@ -811,7 +828,11 @@ def setup_wizard_submit(
 ):
     settings = db.scalar(select(AppSetting).limit(1))
     if not settings:
-        return RedirectResponse("/setup/1?error=Settings+not+initialized", status_code=303)
+        try:
+            settings = ensure_app_settings(db)
+        except Exception as exc:
+            logger.exception("Unable to initialize setup settings: %s", exc)
+            return RedirectResponse("/setup/1?error=Settings+not+initialized", status_code=303)
     if settings.setup_completed:
         return RedirectResponse("/onboarding", status_code=303)
 
@@ -836,13 +857,20 @@ def setup_wizard_submit(
             db.commit()
             return RedirectResponse("/setup/4", status_code=303)
 
+        # existing admin requires password confirmation when no password rotation is requested.
+        new_password = admin_password.strip()
+        submitted_current = current_password.strip()
+        if not new_password and not verify_password(submitted_current, admin_user.hashed_password):
+            db.commit()
+            return RedirectResponse("/setup/3?error=Current+password+is+incorrect", status_code=303)
+
         # existing admin: optional password update if provided
-        if admin_password.strip():
-            if len(admin_password) < 8:
+        if new_password:
+            if len(new_password) < 8:
                 db.commit()
                 return RedirectResponse("/setup/3?error=New+password+must+be+8%2B+chars", status_code=303)
             admin_user.username = admin_username.strip() or admin_user.username
-            admin_user.hashed_password = hash_password(admin_password)
+            admin_user.hashed_password = hash_password(new_password)
         db.commit()
         return RedirectResponse("/setup/4", status_code=303)
 

@@ -70,6 +70,7 @@ def test_health_reports_worker_and_scheduler(monkeypatch):
     assert result["worker_healthy"] is True
     assert result["last_pipeline_stage"] == "complete"
     assert result["last_pipeline_error"] is None
+    assert result["degraded_reasons"] == []
 
 
 def test_health_degraded_when_scheduler_stale(monkeypatch):
@@ -109,3 +110,23 @@ def test_health_degraded_when_scheduler_stale(monkeypatch):
     result = main.health()
     assert result["status"] == "degraded"
     assert result["scheduler_healthy"] is False
+    assert "scheduler_unhealthy" in result["degraded_reasons"]
+
+
+def test_health_reports_optional_service_outages(monkeypatch):
+    monkeypatch.setattr(main, "engine", DummyEngine())
+    monkeypatch.setattr(main, "Session", DummySession)
+    monkeypatch.setattr(main, "MinifluxClient", lambda: SimpleNamespace(health=lambda: True))
+    monkeypatch.setattr(main, "MeiliService", lambda: SimpleNamespace(health=lambda: False))
+    monkeypatch.setattr(main, "LLMService", lambda: SimpleNamespace(ollama_health=lambda: False))
+    monkeypatch.setattr(
+        main,
+        "celery_app",
+        SimpleNamespace(control=SimpleNamespace(inspect=lambda timeout=1.0: SimpleNamespace(ping=lambda: {"worker": {"ok": "pong"}}))),
+    )
+
+    result = main.health()
+
+    assert result["status"] == "degraded"
+    assert "meilisearch_unreachable" in result["degraded_reasons"]
+    assert "ollama_unreachable" in result["degraded_reasons"]
