@@ -6,7 +6,8 @@ import urllib.parse
 
 import json
 
-from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -180,13 +181,27 @@ def _safe_next_url(next_url: str | None) -> str:
     if not candidate:
         return "/"
 
-    parts = urlsplit(candidate)
+    parts = urllib.parse.urlsplit(candidate)
     if parts.scheme or parts.netloc:
         return "/"
     if not parts.path.startswith("/") or parts.path.startswith("//"):
         return "/"
 
-    return urlunsplit(("", "", parts.path, parts.query, ""))
+    return urllib.parse.urlunsplit(("", "", parts.path, parts.query, ""))
+
+
+@app.exception_handler(HTTPException)
+async def app_http_exception_handler(request: Request, exc: HTTPException):
+    if exc.status_code == 401:
+        accept_header = (request.headers.get("accept") or "").lower()
+        wants_html = "text/html" in accept_header
+        if wants_html and request.url.path not in {"/login", "/logout"}:
+            next_path = request.url.path
+            if request.url.query:
+                next_path = f"{next_path}?{request.url.query}"
+            safe_next = _safe_next_url(next_path)
+            return RedirectResponse(f"/login?next={quote_plus(safe_next)}", status_code=303)
+    return await http_exception_handler(request, exc)
 
 
 
