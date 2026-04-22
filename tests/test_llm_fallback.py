@@ -48,6 +48,8 @@ def test_ollama_health_uses_runtime_base_url(monkeypatch):
                 "llm_provider": "ollama",
                 "openai_api_key": "",
                 "ollama_base_url": "http://env-ollama:11434",
+                "ollama_chat_model": "llama3.1:8b",
+                "ollama_embed_model": "nomic-embed-text",
             },
         )(),
     )
