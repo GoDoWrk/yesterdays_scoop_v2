@@ -1,0 +1,110 @@
+version: "3.9"
+
+services:
+  web:
+    build:
+      context: .
+    image: ${YS_APP_IMAGE:-yesterdays-scoop:local}
+    env_file:
+      - .env
+    depends_on:
+      app_db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      miniflux:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    ports:
+      - "${YS_WEB_PORT:-8000}:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+    image: ${YS_APP_IMAGE:-yesterdays-scoop:local}
+    env_file:
+      - .env
+    depends_on:
+      app_db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      miniflux:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    command: celery -A app.tasks.celery_app.celery_app worker --loglevel=INFO
+    restart: unless-stopped
+
+  beat:
+    build:
+      context: .
+    image: ${YS_APP_IMAGE:-yesterdays-scoop:local}
+    env_file:
+      - .env
+    depends_on:
+      app_db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: celery -A app.tasks.celery_app.celery_app beat --loglevel=INFO
+    restart: unless-stopped
+
+  app_db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${APP_DB_NAME:-scoop}
+      POSTGRES_USER: ${APP_DB_USER:-scoop}
+      POSTGRES_PASSWORD: ${APP_DB_PASSWORD:-scoop}
+    volumes:
+      - app_db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  miniflux_db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${MINIFLUX_DB_NAME:-miniflux}
+      POSTGRES_USER: ${MINIFLUX_DB_USER:-miniflux}
+      POSTGRES_PASSWORD: ${MINIFLUX_DB_PASSWORD:-miniflux}
+    volumes:
+      - miniflux_db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  miniflux:
+    image: miniflux/miniflux:latest
+    depends_on:
+      - miniflux_db
+    environment:
+      DATABASE_URL: ${MINIFLUX_DATABASE_URL:-postgres://miniflux:miniflux@miniflux_db:5432/miniflux?sslmode=disable}
+      RUN_MIGRATIONS: 1
+      CREATE_ADMIN: 1
+      ADMIN_USERNAME: ${MINIFLUX_ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${MINIFLUX_ADMIN_PASSWORD:-admin123}
+    ports:
+      - "${YS_MINIFLUX_PORT:-8080}:8080"
+    restart: unless-stopped
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.12
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-masterKey}
+    volumes:
+      - meili_data:/meili_data
+    ports:
+      - "${YS_MEILI_PORT:-7700}:7700"
+    restart: unless-stopped
+
+volumes:
+  app_db_data:
+  miniflux_db_data:
+  redis_data:
+  meili_data:

@@ -1,0 +1,156 @@
+name: yesterdays-scoop
+
+services:
+  web:
+    build:
+      context: .
+    image: ${YS_APP_IMAGE:-yesterdays-scoop:local}
+    env_file:
+      - .env
+    depends_on:
+      app_db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      miniflux:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    ports:
+      - "${YS_WEB_PORT:-8000}:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+
+  worker:
+    image: ${YS_APP_IMAGE:-yesterdays-scoop:local}
+    build:
+      context: .
+    env_file:
+      - .env
+    depends_on:
+      app_db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      miniflux:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    command: celery -A app.tasks.celery_app.celery_app worker --loglevel=INFO
+    restart: unless-stopped
+
+  beat:
+    image: ${YS_APP_IMAGE:-yesterdays-scoop:local}
+    build:
+      context: .
+    env_file:
+      - .env
+    depends_on:
+      app_db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: celery -A app.tasks.celery_app.celery_app beat --loglevel=INFO
+    restart: unless-stopped
+
+  app_db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${APP_DB_NAME:-scoop}
+      POSTGRES_USER: ${APP_DB_USER:-scoop}
+      POSTGRES_PASSWORD: ${APP_DB_PASSWORD:-scoop}
+    volumes:
+      - ${YS_DATA_ROOT:-./data}/app_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${APP_DB_USER:-scoop} -d ${APP_DB_NAME:-scoop}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  miniflux_db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${MINIFLUX_DB_NAME:-miniflux}
+      POSTGRES_USER: ${MINIFLUX_DB_USER:-miniflux}
+      POSTGRES_PASSWORD: ${MINIFLUX_DB_PASSWORD:-miniflux}
+    volumes:
+      - ${YS_DATA_ROOT:-./data}/miniflux_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MINIFLUX_DB_USER:-miniflux} -d ${MINIFLUX_DB_NAME:-miniflux}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - ${YS_DATA_ROOT:-./data}/redis:/data
+    restart: unless-stopped
+
+  miniflux:
+    image: miniflux/miniflux:latest
+    depends_on:
+      miniflux_db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${MINIFLUX_DATABASE_URL:-postgres://miniflux:miniflux@miniflux_db:5432/miniflux?sslmode=disable}
+      RUN_MIGRATIONS: 1
+      CREATE_ADMIN: 1
+      ADMIN_USERNAME: ${MINIFLUX_ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${MINIFLUX_ADMIN_PASSWORD:-admin123}
+    ports:
+      - "${YS_MINIFLUX_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/v1/healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.12
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-masterKey}
+    volumes:
+      - ${YS_DATA_ROOT:-./data}/meili:/meili_data
+    ports:
+      - "${YS_MEILI_PORT:-7700}:7700"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:7700/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    ports:
+      - "${YS_OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ${YS_DATA_ROOT:-./data}/ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 20s
+      timeout: 8s
+      retries: 12
+    restart: unless-stopped
+
+  ollama-init:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: ollama:11434
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-llama3.1:8b}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      for i in $(seq 1 30); do ollama list >/dev/null 2>&1 && break; sleep 2; done;
+      ollama pull ${OLLAMA_CHAT_MODEL};
+      ollama pull ${OLLAMA_EMBED_MODEL};
+    restart: "no"

@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="mx-auto max-w-4xl space-y-6">
+  <h1 class="text-3xl font-semibold">Let’s set up Yesterday’s Scoop</h1>
+  <p class="text-sm text-slate-300">Step {{ step }} of 8</p>
+
+  <div class="grid grid-cols-4 gap-2 text-xs">
+    {% for n in range(1, 9) %}
+      <div class="rounded-lg px-2 py-1 {{ 'bg-indigo-700/60 text-white' if n <= step else 'bg-slate-800 text-slate-400' }}">{{ n }}{% if n == 1 %} Welcome{% elif n == 2 %} Checks{% elif n == 3 %} Admin{% elif n == 4 %} Region{% elif n == 5 %} Sources{% elif n == 6 %} AI{% elif n == 7 %} Social{% else %} Finish{% endif %}</div>
+    {% endfor %}
+  </div>
+
+  {% if error %}<div class="rounded-xl border border-rose-700/40 bg-rose-900/20 px-4 py-3 text-sm text-rose-200">{{ error }}</div>{% endif %}
+  {% if ok %}<div class="rounded-xl border border-emerald-700/40 bg-emerald-900/20 px-4 py-3 text-sm text-emerald-200">{{ ok }}</div>{% endif %}
+
+  {% if step == 1 %}
+    <article class="panel space-y-3">
+      <p class="meta">Welcome</p>
+      <p class="text-slate-300">Yesterday’s Scoop tracks important stories, keeps them updated, and summarizes what changed.</p>
+      <p class="text-slate-300">This setup will check your services, confirm admin access, set your region and interests, choose source presets, and configure AI/social features.</p>
+      <form method="post" action="/setup/1"><button class="pill">Start setup</button></form>
+    </article>
+  {% elif step == 2 %}
+    <article class="panel space-y-4">
+      <p class="meta">System checks</p>
+      <p class="text-sm text-slate-300">We tested core services. You can retry this step after fixing issues.</p>
+      <ul class="space-y-2 text-sm">
+        {% for key, item in checks.items() %}
+        <li>
+          <span class="font-medium">{{ item.message }}</span>:
+          <span class="{{ 'text-emerald-300' if item.status == 'pass' else ('text-amber-300' if item.status == 'warn' else 'text-rose-300') }}">{{ item.status|upper }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      <div class="flex gap-3">
+        <a class="pill" href="/setup/2">Retry checks</a>
+        <form method="post" action="/setup/2"><button class="pill">Continue</button></form>
+      </div>
+    </article>
+  {% elif step == 3 %}
+    <article class="panel space-y-3">
+      <p class="meta">Admin confirmation</p>
+      <p class="text-sm text-slate-300">Confirm the admin account you want to use for this installation.</p>
+      {% if admin_user %}<p class="text-sm text-slate-300">Current admin: <strong>{{ admin_user.username }}</strong>. Enter a new password only if you want to rotate credentials.</p>{% endif %}
+      <form method="post" action="/setup/3" class="space-y-3">
+        <input class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="admin_username" value="{{ admin_user.username if admin_user else 'admin' }}" placeholder="Admin username" />
+        <input class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" type="password" name="admin_password" placeholder="Admin password (8+ chars)" />
+        <button class="pill">Continue</button>
+      </form>
+    </article>
+  {% elif step == 4 %}
+    <article class="panel space-y-3">
+      <p class="meta">Region and relevance</p>
+      <form method="post" action="/setup/4" class="space-y-3">
+        <input class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="region" value="{{ settings.region if settings else 'global' }}" placeholder="Region (example: Arizona, US)" />
+        <select class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="local_relevance_preference">
+          <option value="low" {% if settings and settings.local_relevance_preference == 'low' %}selected{% endif %}>Low local boost</option>
+          <option value="medium" {% if not settings or settings.local_relevance_preference == 'medium' %}selected{% endif %}>Balanced local boost</option>
+          <option value="high" {% if settings and settings.local_relevance_preference == 'high' %}selected{% endif %}>High local boost</option>
+        </select>
+        <input class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="topics" value="{{ (settings.topics|join(',')) if settings and settings.topics else 'world,politics,business,technology' }}" placeholder="Interest categories (comma-separated)" />
+        <button class="pill">Continue</button>
+      </form>
+    </article>
+  {% elif step == 5 %}
+    <article class="panel space-y-3">
+      <p class="meta">Choose source preset</p>
+      <form method="post" action="/setup/5" class="space-y-2 text-sm">
+        <label class="flex items-center gap-2"><input type="radio" name="source_preset" value="balanced" checked /> Balanced mainstream (mix of national and international)</label>
+        <label class="flex items-center gap-2"><input type="radio" name="source_preset" value="us_national" /> U.S. national heavy (more U.S.-focused coverage)</label>
+        <label class="flex items-center gap-2"><input type="radio" name="source_preset" value="international" /> International (global coverage first)</label>
+        <label class="flex items-center gap-2"><input type="radio" name="source_preset" value="tech_business" /> Technology/business (market and innovation heavy)</label>
+        <label class="flex items-center gap-2"><input type="radio" name="source_preset" value="custom" /> Custom starter set (you fine-tune in Sources page)</label>
+        <button class="pill mt-2">Continue</button>
+      </form>
+    </article>
+  {% elif step == 6 %}
+    <article class="panel space-y-3">
+      <p class="meta">AI setup</p>
+      <p class="text-sm text-slate-300">Pick local Ollama, OpenAI, or hybrid fallback. You can change this later.</p>
+      <form method="post" action="/setup/6" class="space-y-3">
+        <select class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="llm_provider">
+          <option value="ollama" {% if settings and settings.llm_provider == 'ollama' %}selected{% endif %}>Local Ollama (private, self-hosted)</option>
+          <option value="openai" {% if settings and settings.llm_provider == 'openai' %}selected{% endif %}>OpenAI (cloud, easiest start)</option>
+          <option value="hybrid">Hybrid (local first, cloud fallback)</option>
+        </select>
+        <input class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="ollama_base_url" value="{{ settings.ollama_base_url if settings else '' }}" placeholder="Ollama URL" />
+        <input class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="ollama_chat_model" value="{{ settings.ollama_chat_model if settings else '' }}" placeholder="Summarization model" />
+        <input class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="ollama_embed_model" value="{{ settings.ollama_embed_model if settings else '' }}" placeholder="Embedding model" />
+        <input class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="openai_api_key" placeholder="OpenAI API key (optional)" />
+        <input class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="openai_model" value="{{ settings.openai_model if settings else 'gpt-4.1-mini' }}" placeholder="OpenAI model" />
+        <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="openai_fallback_enabled" {% if settings and settings.openai_fallback_enabled %}checked{% endif %} /> Enable OpenAI fallback</label>
+        <div class="flex gap-3">
+          <button class="pill" name="test_connection" value="true">Test connection</button>
+          <button class="pill">Continue</button>
+        </div>
+      </form>
+      {% if connection_ok == '1' %}<p class="text-sm text-emerald-300">Connection test passed.</p>{% elif connection_ok == '0' %}<p class="text-sm text-amber-300">Connection test failed. You can continue and adjust later.</p>{% endif %}
+    </article>
+  {% elif step == 7 %}
+    <article class="panel space-y-3">
+      <p class="meta">Optional social context</p>
+      <p class="text-sm text-slate-300">Social context adds reactions and commentary. It does not change core news ranking.</p>
+      <form method="post" action="/setup/7" class="space-y-2 text-sm">
+        <label class="flex items-center gap-2"><input type="checkbox" name="enable_social_context" {% if settings and settings.enable_social_context %}checked{% endif %} /> Enable social context</label>
+        <label class="flex items-center gap-2"><input type="checkbox" name="enable_reddit_context" {% if settings and settings.enable_reddit_context %}checked{% endif %} /> Enable Reddit context</label>
+        <label class="flex items-center gap-2"><input type="checkbox" name="enable_x_context" {% if settings and settings.enable_x_context %}checked{% endif %} /> Enable X context (requires API token)</label>
+        <button class="pill">Continue</button>
+      </form>
+    </article>
+  {% else %}
+    <article class="panel space-y-3">
+      <p class="meta">Review and finish</p>
+      <ul class="text-sm space-y-1 text-slate-300">
+        <li>Region: {{ settings.region }}</li>
+        <li>Local relevance preference: {{ settings.local_relevance_preference }}</li>
+        <li>Topics: {{ settings.topics|join(', ') if settings and settings.topics else 'none' }}</li>
+        <li>Source preset: {{ settings.source_preset }}</li>
+        <li>AI provider: {{ settings.llm_provider }}</li>
+        <li>Social context: {{ 'enabled' if settings and settings.enable_social_context else 'disabled' }}</li>
+      </ul>
+      <p class="text-sm text-slate-300">Finish setup to save these choices and launch onboarding.</p>
+      <form method="post" action="/setup/8"><button class="pill">Finish setup</button></form>
+    </article>
+  {% endif %}
+</section>
+{% endblock %}

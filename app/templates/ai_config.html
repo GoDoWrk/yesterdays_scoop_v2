@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="mx-auto max-w-4xl space-y-6">
+  <div>
+    <h1 class="text-3xl font-semibold">AI Configuration</h1>
+    <p class="mt-1 text-sm text-slate-300">Configure provider, model selection, fallback behavior, and AI feature toggles.</p>
+  </div>
+
+  {% if error %}<div class="rounded-xl border border-rose-700/40 bg-rose-900/20 px-4 py-3 text-sm text-rose-200">{{ error }}</div>{% endif %}
+  {% if ok %}<div class="rounded-xl border border-emerald-700/40 bg-emerald-900/20 px-4 py-3 text-sm text-emerald-200">{{ ok }}</div>{% endif %}
+
+  <article class="panel">
+    <p class="meta">Connection status</p>
+    <p class="mt-2 text-sm">Ollama: <span class="{{ 'text-emerald-300' if ollama_connected else 'text-rose-300' }}">{{ 'Connected' if ollama_connected else 'Unavailable' }}</span></p>
+    <p class="text-sm">Summarization model available: <span class="{{ 'text-emerald-300' if summary_model_ok else 'text-amber-300' }}">{{ 'Yes' if summary_model_ok else 'No' }}</span></p>
+    <p class="text-sm">Embedding model available: <span class="{{ 'text-emerald-300' if embed_model_ok else 'text-amber-300' }}">{{ 'Yes' if embed_model_ok else 'No' }}</span></p>
+  </article>
+
+  <article class="panel space-y-4">
+    <p class="meta">Provider and models</p>
+    <form method="post" action="/ai/save" class="space-y-3">
+      <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="enable_ai_summarization" {% if settings and settings.enable_ai_summarization %}checked{% endif %} /> Enable AI summarization</label>
+
+      <label class="block text-sm text-slate-300">Primary provider</label>
+      <select class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="llm_provider">
+        <option value="ollama" {% if settings and settings.llm_provider == 'ollama' %}selected{% endif %}>Ollama</option>
+        <option value="openai" {% if settings and settings.llm_provider == 'openai' %}selected{% endif %}>OpenAI</option>
+      </select>
+
+      <input class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="ollama_base_url" value="{{ settings.ollama_base_url if settings else '' }}" placeholder="Ollama base URL" />
+
+      <label class="block text-sm text-slate-300">Summarization model</label>
+      <input list="ollama-model-list" class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="ollama_chat_model" value="{{ settings.ollama_chat_model if settings else '' }}" />
+
+      <label class="block text-sm text-slate-300">Embedding model</label>
+      <input list="ollama-model-list" class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="ollama_embed_model" value="{{ settings.ollama_embed_model if settings else '' }}" />
+
+      <datalist id="ollama-model-list">
+        {% for m in models %}<option value="{{ m }}"></option>{% endfor %}
+      </datalist>
+
+      <input class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="openai_api_key" placeholder="OpenAI API key (optional)" />
+      <input class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="openai_model" value="{{ settings.openai_model if settings else 'gpt-4.1-mini' }}" placeholder="OpenAI model" />
+
+      <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="openai_fallback_enabled" {% if settings and settings.openai_fallback_enabled %}checked{% endif %} /> Enable OpenAI fallback when primary provider fails</label>
+
+      <button class="pill" type="submit">Save AI settings</button>
+    </form>
+  </article>
+
+  <article class="panel space-y-3">
+    <p class="meta">Model pull</p>
+    <form method="post" action="/ai/pull-model" class="flex gap-2">
+      <input class="flex-1 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="model_name" placeholder="e.g. llama3.1:8b" required />
+      <button class="pill" type="submit">Pull model</button>
+    </form>
+  </article>
+</section>
+{% endblock %}

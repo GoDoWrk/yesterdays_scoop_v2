@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login · Yesterday's Scoop</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/static/css/app.css" />
+  </head>
+  <body class="bg-slate-950 text-slate-100 min-h-screen">
+    <main class="mx-auto flex min-h-screen max-w-md items-center px-6">
+      <form method="post" class="w-full space-y-4 panel">
+        <h1 class="text-2xl font-semibold">Sign in</h1>
+        {% if error %}
+          <p class="text-sm text-rose-300">{{ error }}</p>
+        {% endif %}
+        <input name="username" placeholder="Username" class="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3" />
+        <input name="password" type="password" placeholder="Password" class="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3" />
+        <button class="pill">Login</button>
+      </form>
+    </main>
+  </body>
+</html>
