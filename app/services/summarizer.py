@@ -160,8 +160,18 @@ def _build_structured_deltas(
         lines.append(f"New named actors/entities: {', '.join(new_entities[:4])}.")
 
     numbers_now = set(NUMBER_PATTERN.findall(text_blob))
-    if numbers_now:
-        lines.append(f"Newly reported numbers/metrics mention: {', '.join(sorted(numbers_now)[:4])}.")
+    if deltas and numbers_now:
+        delta_number_tokens: set[str] = set()
+        for delta in deltas:
+            if not isinstance(delta, dict):
+                continue
+            delta_blob = " ".join(
+                str(delta.get(field) or "")
+                for field in ("title", "summary", "snippet", "text", "excerpt", "published_at")
+            )
+            delta_number_tokens.update(NUMBER_PATTERN.findall(delta_blob))
+        if delta_number_tokens:
+            lines.append(f"Newly reported numbers/metrics mention: {', '.join(sorted(delta_number_tokens)[:4])}.")
 
     latest_added = max((d.get("published_at") for d in deltas if d.get("published_at")), default=None)
     if latest_added:

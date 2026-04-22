@@ -105,12 +105,30 @@ def _validate_payload(payload: dict[str, Any]) -> BackupPayload:
         if not isinstance(data[key], list):
             raise BackupValidationError(f"Invalid backup: section '{key}' must be a list.")
 
+    _backfill_legacy_source_metadata(data["sources"])
+
     return BackupPayload(
         schema_version=version,
         created_at=str(payload.get("created_at") or ""),
         includes_articles=bool(payload.get("includes_articles", True)),
         data=data,
     )
+
+
+def _backfill_legacy_source_metadata(source_rows: list[dict[str, Any]]) -> None:
+    if not source_rows:
+        return
+    from app.services.source_catalog import infer_source_metadata
+
+    for row in source_rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("source_type") and row.get("topic") and row.get("geography"):
+            continue
+        inferred = infer_source_metadata(str(row.get("name") or ""), str(row.get("feed_url") or ""))
+        row.setdefault("source_type", str(inferred["source_type"]))
+        row.setdefault("topic", str(inferred["topic"]))
+        row.setdefault("geography", str(inferred["geography"]))
 
 
 def _clear_restorable_tables(db: Session) -> None:
