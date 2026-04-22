@@ -61,6 +61,10 @@ def test_password_context_keeps_bcrypt_for_legacy_hashes():
     assert "bcrypt" in auth.pwd_context.schemes()
 
 
+def test_password_context_keeps_bcrypt_for_legacy_hashes():
+    assert "bcrypt" in auth.pwd_context.schemes()
+
+
 def test_login_submit_sets_session_cookie(monkeypatch):
     import app.main as main
 
