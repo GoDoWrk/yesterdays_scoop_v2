@@ -173,7 +173,8 @@ class LLMService:
     def ollama_health(self) -> bool:
         try:
             with httpx.Client(timeout=10.0) as client:
-                res = client.get(f"{self.settings.ollama_base_url.rstrip('/')}/api/tags")
+                base_url = (self.overrides.get("ollama_base_url") or self.settings.ollama_base_url).rstrip("/")
+                res = client.get(f"{base_url}/api/tags")
                 return res.status_code == 200
         except Exception:
             return False

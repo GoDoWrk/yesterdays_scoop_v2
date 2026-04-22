@@ -36,3 +36,48 @@ def test_openai_provider_selection_uses_runtime_api_key(monkeypatch):
     service = LLMService()
 
     assert service.primary == "openai-provider"
+
+
+def test_ollama_health_uses_runtime_base_url(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.llm.get_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {
+                "llm_provider": "ollama",
+                "openai_api_key": "",
+                "ollama_base_url": "http://env-ollama:11434",
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        "app.services.llm.get_runtime_overrides",
+        lambda: {"ollama_base_url": "http://runtime-ollama:11434"},
+    )
+
+    urls = []
+
+    class DummyResponse:
+        status_code = 200
+
+    class DummyClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url):
+            urls.append(url)
+            return DummyResponse()
+
+    monkeypatch.setattr("app.services.llm.httpx.Client", DummyClient)
+
+    service = LLMService()
+
+    assert service.ollama_health() is True
+    assert urls == ["http://runtime-ollama:11434/api/tags"]
