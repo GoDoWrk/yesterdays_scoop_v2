@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import asyncio
 
 import app.services.auth as auth
 
@@ -40,7 +41,7 @@ def test_authenticate_user_rejects_invalid_password():
 def test_require_admin_rejects_non_admin_user():
     user = SimpleNamespace(is_admin=False)
     try:
-        auth.require_admin(user)
+        asyncio.run(auth.require_admin(user))
     except Exception as exc:
         assert getattr(exc, "status_code", None) == 403
         return
@@ -128,8 +129,10 @@ def test_login_page_sanitizes_next_redirect(monkeypatch):
 
     class DummyTemplates:
         @staticmethod
-        def TemplateResponse(_name, context):
-            return context
+        def TemplateResponse(*args, **kwargs):
+            if len(args) == 3:
+                return args[2]
+            return args[1]
 
     monkeypatch.setattr(main, "templates", DummyTemplates())
 
