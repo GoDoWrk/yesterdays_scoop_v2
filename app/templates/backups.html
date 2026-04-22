@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="mx-auto max-w-4xl space-y-6">
+  <div>
+    <h1 class="text-3xl font-semibold">Backups & Recovery</h1>
+    <p class="mt-2 text-slate-300">Create downloadable backups and restore system state without using the CLI.</p>
+  </div>
+
+  {% if error %}
+    <div class="rounded-xl border border-rose-700/40 bg-rose-900/20 px-4 py-3 text-sm text-rose-200">{{ error }}</div>
+  {% endif %}
+  {% if ok %}
+    <div class="rounded-xl border border-emerald-700/40 bg-emerald-900/20 px-4 py-3 text-sm text-emerald-200">{{ ok }}</div>
+  {% endif %}
+
+  <article class="panel space-y-4">
+    <div>
+      <p class="meta">Create backup</p>
+      <p class="mt-2 text-sm text-slate-300">Exports settings, sources, feed states, clusters, and events. Include articles if you need full historical recovery.</p>
+    </div>
+    <form method="post" action="/backups/export" class="space-y-3">
+      <label class="flex items-center gap-2 text-sm text-slate-300">
+        <input type="checkbox" name="include_articles" value="true" />
+        Include articles (larger file, slower restore)
+      </label>
+      <button class="pill" type="submit">Download backup</button>
+    </form>
+  </article>
+
+  <article class="panel space-y-4">
+    <div>
+      <p class="meta">Restore backup</p>
+      <p class="mt-2 text-sm text-slate-300">This operation overwrites restorable app data. Users and auth records are preserved.</p>
+      <ul class="mt-2 list-disc pl-5 text-sm text-slate-400">
+        <li>Validates backup schema version before restore.</li>
+        <li>Requires explicit overwrite confirmation.</li>
+        <li>Use a recent backup for best compatibility.</li>
+      </ul>
+    </div>
+    <form method="post" action="/backups/restore" enctype="multipart/form-data" class="space-y-3">
+      <input class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm" type="file" name="backup_file" accept="application/json" required />
+      <label class="flex items-center gap-2 text-sm text-amber-200">
+        <input type="checkbox" name="confirm_overwrite" value="true" required />
+        I understand this will overwrite current app data.
+      </label>
+      <button class="pill" type="submit">Restore from backup</button>
+    </form>
+  </article>
+
+  <article class="panel">
+    <p class="meta">Recovery notes</p>
+    <p class="mt-2 text-sm text-slate-300">If a restore fails, check service logs:</p>
+    <code class="mt-2 block rounded-lg bg-slate-900 p-3 text-xs text-slate-300">docker compose logs -f web worker beat</code>
+  </article>
+</section>
+{% endblock %}

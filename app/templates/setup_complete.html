@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="mx-auto max-w-3xl space-y-6">
+  <h1 class="text-3xl font-semibold">Setup complete 🎉</h1>
+  <p class="text-slate-300">Your system is configured. We’re now bootstrapping feeds and running the first pipeline in the background.</p>
+
+  <article class="panel space-y-2 text-sm text-slate-300">
+    <p><strong>What was saved</strong></p>
+    <ul class="list-disc pl-6 space-y-1">
+      <li>Region: {{ settings.region if settings else 'global' }}</li>
+      <li>Topics: {{ settings.topics|join(', ') if settings and settings.topics else 'none' }}</li>
+      <li>Source preset: {{ settings.source_preset if settings else 'balanced' }}</li>
+      <li>AI provider: {{ settings.llm_provider if settings else 'ollama' }}</li>
+      <li>Social context: {{ 'enabled' if settings and settings.enable_social_context else 'disabled' }}</li>
+    </ul>
+  </article>
+
+  <div class="flex gap-3">
+    <a class="pill" href="/?tour=1" onclick="localStorage.setItem('ys_force_tour','1')">Start guided tour</a>
+    <a class="pill" href="/admin">Open admin dashboard</a>
+    <a class="pill" href="/sources">Review sources</a>
+  </div>
+  <p class="text-sm text-slate-400">You can relaunch this anytime from the top navigation using “Take tour again”.</p>
+</section>
+{% endblock %}

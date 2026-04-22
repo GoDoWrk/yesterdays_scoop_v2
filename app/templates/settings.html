@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="mx-auto max-w-3xl">
+  <h1 class="text-3xl font-semibold">System settings <span class="help-tip">What is this? These controls change app behavior without editing files.</span></h1>
+  <p class="mt-2 text-slate-300">Use plain defaults first. You can tune advanced behavior later.</p>
+  <form method="post" class="mt-6 space-y-4 panel">
+    <div>
+      <label class="text-sm font-medium">Enable AI summaries</label>
+      <p class="text-xs text-slate-400">Adds short AI summaries to clusters. Safe default: on.</p>
+      <label class="mt-2 flex items-center gap-3 text-sm">
+        <input type="checkbox" name="enable_ai_summarization" {% if settings and settings.enable_ai_summarization %}checked{% endif %} />
+        Turn on AI summaries
+      </label>
+    </div>
+
+    <div>
+      <label class="text-sm font-medium">Pipeline interval (minutes)</label>
+      <p class="text-xs text-slate-400">How often background updates run. Safe default: 15.</p>
+      <input type="number" name="poll_interval_minutes" value="{{ settings.poll_interval_minutes if settings else 15 }}" class="mt-2 w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3" />
+      <p class="mt-1 text-xs text-amber-300">Warning: very low values may increase CPU and API usage.</p>
+    </div>
+
+    <div>
+      <label class="text-sm font-medium">Default region</label>
+      <p class="text-xs text-slate-400">Used for local relevance boosting. Safe default: global.</p>
+      <input type="text" name="region" value="{{ settings.region if settings else 'global' }}" class="mt-2 w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3" />
+    </div>
+
+    <div>
+      <label class="text-sm font-medium">Interest categories</label>
+      <p class="text-xs text-slate-400">Comma-separated topics used for emphasis. Safe default: world,technology.</p>
+      <input type="text" name="topics" value="{{ (settings.topics|join(',')) if settings and settings.topics else 'world,technology' }}" class="mt-2 w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3" />
+    </div>
+
+    <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-4 text-sm text-slate-300 space-y-3">
+      <p class="font-medium">Social context</p>
+      <p class="text-xs text-slate-400">Adds reaction context panels. This does not change reporting rank.</p>
+      <label class="flex items-center gap-3"><input type="checkbox" name="enable_social_context" {% if settings and settings.enable_social_context %}checked{% endif %}/> Enable social context</label>
+      <label class="flex items-center gap-3"><input type="checkbox" name="enable_reddit_context" {% if settings and settings.enable_reddit_context %}checked{% endif %}/> Include Reddit context</label>
+      <label class="flex items-center gap-3"><input type="checkbox" name="enable_x_context" {% if settings and settings.enable_x_context %}checked{% endif %}/> Include X context</label>
+      <input type="number" name="social_max_items" min="1" max="30" value="{{ settings.social_max_items if settings else 8 }}" class="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3" placeholder="Max social items per cluster" />
+      <p class="text-xs text-amber-300">Warning: enabling too many social items may add noise.</p>
+      <input type="text" name="x_api_bearer_token" value="{{ settings.x_api_bearer_token if settings and settings.x_api_bearer_token else '' }}" class="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3" placeholder="Optional X API bearer token" />
+    </div>
+
+    <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-4 text-sm text-slate-300">
+      <p>Environment-managed AI connection values (set outside UI):</p>
+      <ul class="mt-2 list-disc pl-5">
+        <li>LLM provider URLs/models</li>
+        <li>OpenAI API key/model</li>
+      </ul>
+    </div>
+
+    <button class="pill">Save settings</button>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="space-y-8">
+  <div class="rounded-3xl border border-slate-800 bg-gradient-to-br from-indigo-900/40 to-slate-900 p-8 shadow-2xl">
+    <p class="text-xs uppercase tracking-[0.2em] text-indigo-300">Top story now <span class="help-tip">This is the highest-ranked active cluster right now.</span></p>
+    {% if hero %}
+      <h1 class="mt-2 text-4xl font-semibold leading-tight">{{ hero.title }}</h1>
+      <p class="mt-2 text-xs uppercase text-slate-400">State: {{ hero.cluster_state }} · Score {{ '%.2f'|format(hero.score or 0) }}</p>
+      <p class="mt-4 text-slate-300">{{ hero.ai_summary or "Summary pending. Run pipeline to enrich this cluster." }}</p>
+      <div class="mt-6 flex gap-6 text-sm text-slate-400">
+        <span>{{ hero.source_count }} sources <span class="help-tip">Source count shows how many distinct source URLs are in this cluster.</span></span>
+        <span>Updated {{ hero.updated_at|relative_minutes }} <span class="help-tip">Recent updates usually indicate active story movement.</span></span>
+        <a href="/clusters/{{ hero.slug }}" class="text-indigo-300">Open cluster →</a>
+      </div>
+    {% else %}
+      <h1 class="mt-2 text-3xl font-semibold">No stories yet</h1>
+      <p class="mt-2 text-slate-300">Trigger the pipeline to ingest sources and generate clusters.</p>
+    {% endif %}
+  </div>
+
+  {% set section_titles = {
+    'developing_near_you': 'Developing near you',
+    'major_us': 'Major U.S.',
+    'major_world': 'Major world',
+    'fast_moving': 'Fast-moving',
+    'recently_updated': 'Recently updated'
+  } %}
+
+  {% for key in ['developing_near_you', 'major_us', 'major_world', 'fast_moving', 'recently_updated'] %}
+    {% set clusters = sections.get(key, []) %}
+    {% if clusters %}
+    <div>
+      <h2 class="text-2xl font-semibold">{{ section_titles[key] }}</h2>
+      <div class="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {% for cluster in clusters %}
+        <article class="cluster-card">
+          <div class="flex items-center justify-between text-xs uppercase text-slate-400">
+            <span>{{ cluster.cluster_state }}</span>
+            <span>{{ cluster.updated_at|relative_minutes }}</span>
+          </div>
+          <h3 class="mt-3 text-lg font-medium leading-snug">{{ cluster.title }}</h3>
+          <p class="mt-1 text-xs text-slate-400">Importance {{ '%.2f'|format(cluster.importance_score or 0) }} <span class="help-tip">Cluster score blends impact, corroboration, freshness, and confidence.</span> · Local {{ '%.2f'|format(cluster.local_relevance_score or 0) }} <span class="help-tip">Local relevance boosts stories tied to your chosen region.</span>{% if cluster.seeking_confirmation %} · Seeking confirmation{% endif %}</p>
+          <p class="mt-2 line-clamp-3 text-sm text-slate-300">{{ cluster.ai_summary or cluster.why_it_matters or "Coverage still stabilizing for this story." }}</p>
+          <a class="mt-4 inline-flex text-sm text-indigo-300" href="/clusters/{{ cluster.slug }}">Expand coverage →</a>
+        </article>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  {% endfor %}
+</section>
+{% endblock %}
