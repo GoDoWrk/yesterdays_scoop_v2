@@ -57,14 +57,14 @@ class MeiliService:
             logger.warning("Meilisearch cluster index bootstrap warning: %s", exc)
 
         self._request("PATCH", "/indexes/articles/settings", {
-            "searchableAttributes": ["title", "summary", "extracted_text", "source_name"],
+            "searchableAttributes": ["title", "summary", "source_name", "extracted_text"],
             "filterableAttributes": ["published_at", "cluster_id", "source_name"],
             "sortableAttributes": ["published_at"],
         })
         self._request("PATCH", "/indexes/clusters/settings", {
-            "searchableAttributes": ["title", "ai_summary", "why_it_matters", "key_entities", "cluster_state"],
+            "searchableAttributes": ["title", "key_entities", "ai_summary", "why_it_matters", "what_changed", "cluster_state"],
             "filterableAttributes": ["updated_at", "source_count", "cluster_state", "seeking_confirmation"],
-            "sortableAttributes": ["score", "importance_score", "velocity_score", "updated_at"],
+            "sortableAttributes": ["score", "importance_score", "velocity_score", "freshness_score", "updated_at"],
         })
 
     def index_from_db(self, db: Session, article_ids: list[int] | None = None, cluster_ids: list[int] | None = None) -> dict[str, int]:
@@ -106,6 +106,9 @@ class MeiliService:
                 "ai_summary": c.ai_summary,
                 "why_it_matters": c.why_it_matters,
                 "key_entities": c.key_entities,
+                "what_changed": c.what_changed,
+                "freshness_score": c.freshness_score,
+                "corroboration_count": c.corroboration_count,
                 "source_count": c.source_count,
                 "score": c.score,
                 "importance_score": c.importance_score,
@@ -129,11 +132,33 @@ class MeiliService:
         cluster_hits = self._request("POST", "/indexes/clusters/search", {
             "q": query,
             "limit": limit,
-            "sort": ["score:desc", "updated_at:desc"],
+            "sort": ["score:desc", "freshness_score:desc", "updated_at:desc"],
+            "attributesToHighlight": ["title", "ai_summary", "why_it_matters", "key_entities", "what_changed"],
+            "matchingStrategy": "all",
         }).get("hits", [])
         article_hits = self._request("POST", "/indexes/articles/search", {
             "q": query,
             "limit": limit,
             "sort": ["published_at:desc"],
+            "attributesToHighlight": ["title", "summary", "extracted_text", "source_name"],
+            "matchingStrategy": "all",
         }).get("hits", [])
-        return {"clusters": cluster_hits, "articles": article_hits}
+
+        # Cluster-first retrieval: boost clusters that also have matching articles.
+        article_cluster_boost: dict[int, int] = {}
+        for hit in article_hits:
+            cluster_id = hit.get("cluster_id")
+            if isinstance(cluster_id, int):
+                article_cluster_boost[cluster_id] = article_cluster_boost.get(cluster_id, 0) + 1
+
+        def _cluster_rank(hit: dict) -> tuple:
+            cid = hit.get("cluster_id")
+            return (
+                article_cluster_boost.get(cid, 0),
+                float(hit.get("score") or 0.0),
+                float(hit.get("importance_score") or 0.0),
+                float(hit.get("freshness_score") or 0.0),
+            )
+
+        cluster_hits = sorted(cluster_hits, key=_cluster_rank, reverse=True)
+        return {"clusters": cluster_hits[:limit], "articles": article_hits[:limit]}

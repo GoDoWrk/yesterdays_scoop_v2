@@ -10,7 +10,7 @@ from app.models import User
 settings = get_settings()
 manager = LoginManager(settings.auth_secret, token_url="/login", use_cookie=True)
 manager.cookie_name = "yscoop_session"
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 
 def hash_password(password: str) -> str:

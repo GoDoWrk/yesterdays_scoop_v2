@@ -7,7 +7,7 @@ import re
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
-from app.models import AppSetting, Article, Cluster, ClusterEvent
+from app.models import AppSetting, Article, Cluster, ClusterEvent, Source
 from app.services.source_tiers import source_weight
 
 RANKING_WEIGHTS = {
@@ -61,18 +61,23 @@ def rank_clusters(db: Session, cluster_ids: list[int] | None = None) -> None:
             continue
 
         cluster.corroboration_count = len({(a.source_name or "").strip().lower() for a in articles if a.source_name})
-        cluster.source_confidence_score = _source_confidence_score(articles)
+        source_meta = _source_metadata(db, articles)
+        cluster.source_confidence_score = _source_confidence_score(articles, source_meta)
         cluster.impact_score = _impact_score(cluster, articles)
         cluster.local_relevance_score = _local_relevance_score(cluster, articles, user_region)
         cluster.velocity_score = _velocity_score(db, cluster.id, now)
         cluster.freshness_score = _freshness_score(cluster, articles, now)
         cluster.staleness_decay = _staleness_decay(cluster, now)
 
+        source_type_diversity = min(1.0, len({(m.get("source_type") or "") for m in source_meta.values() if m.get("source_type")}) / 4.0)
+        geo_diversity = min(1.0, len({(m.get("geography") or "") for m in source_meta.values() if m.get("geography")}) / 5.0)
         corroboration_score = min(1.0, cluster.corroboration_count / 8.0)
         importance = (
             RANKING_WEIGHTS["impact"] * cluster.impact_score
             + RANKING_WEIGHTS["confidence"] * cluster.source_confidence_score
             + RANKING_WEIGHTS["corroboration"] * corroboration_score
+            + 0.06 * source_type_diversity
+            + 0.05 * geo_diversity
             + RANKING_WEIGHTS["velocity"] * cluster.velocity_score
             + RANKING_WEIGHTS["freshness"] * cluster.freshness_score
         )
@@ -86,10 +91,36 @@ def rank_clusters(db: Session, cluster_ids: list[int] | None = None) -> None:
     db.commit()
 
 
-def _source_confidence_score(articles: list[Article]) -> float:
+def _source_metadata(db: Session, articles: list[Article]) -> dict[str, dict]:
+    names = {a.source_name for a in articles if a.source_name}
+    if not names:
+        return {}
+    rows = db.scalars(select(Source).where(Source.name.in_(names))).all()
+    return {
+        r.name: {
+            "source_type": r.source_type,
+            "geography": r.geography,
+            "tier": r.source_tier,
+            "priority_weight": r.priority_weight,
+        }
+        for r in rows
+    }
+
+
+def _source_confidence_score(articles: list[Article], source_meta: dict[str, dict]) -> float:
     if not articles:
         return 0.0
-    weights = [source_weight(a.source_name) for a in articles]
+    weights = []
+    for a in articles:
+        meta = source_meta.get(a.source_name or "", {})
+        weights.append(
+            source_weight(
+                a.source_name,
+                source_type=meta.get("source_type"),
+                tier_override=meta.get("tier"),
+                priority_weight=meta.get("priority_weight"),
+            )
+        )
     return min(1.0, sum(weights) / max(1.0, len(weights)))
 
 

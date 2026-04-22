@@ -17,7 +17,18 @@ SOURCE_TIERS: dict[int, set[str]] = {
     },
 }
 
-TIER_WEIGHTS: dict[int, float] = {1: 1.0, 2: 0.75, 3: 0.5}
+TIER_WEIGHTS: dict[int, float] = {1: 1.0, 2: 0.8, 3: 0.6}
+SOURCE_TYPE_WEIGHTS: dict[str, float] = {
+    "wire": 1.0,
+    "official": 0.95,
+    "major_outlet": 0.88,
+    "analysis": 0.82,
+    "regional": 0.76,
+    "local": 0.72,
+    "niche": 0.74,
+    "aggregator": 0.62,
+    "social": 0.5,
+}
 
 
 def source_tier(source_name: str | None) -> int:
@@ -30,5 +41,9 @@ def source_tier(source_name: str | None) -> int:
     return 3
 
 
-def source_weight(source_name: str | None) -> float:
-    return TIER_WEIGHTS[source_tier(source_name)]
+def source_weight(source_name: str | None, *, source_type: str | None = None, tier_override: int | None = None, priority_weight: float | None = None) -> float:
+    tier = tier_override or source_tier(source_name)
+    tier_base = TIER_WEIGHTS.get(tier, 0.55)
+    type_mult = SOURCE_TYPE_WEIGHTS.get((source_type or "").strip().lower(), 0.75)
+    editorial_weight = priority_weight if priority_weight is not None else 1.0
+    return min(1.2, max(0.25, tier_base * type_mult * editorial_weight))

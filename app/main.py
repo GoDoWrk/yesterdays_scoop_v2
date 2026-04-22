@@ -19,7 +19,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.core.logging import configure_logging
 from app.db.migrations import run_migrations
 from app.db.session import engine, get_db
-from app.models import AppSetting, Article, Cluster, ServiceState, SocialItem, Source, User
+from app.models import AppSetting, Article, Cluster, ClusterEvent, ServiceState, SocialItem, Source, User
 from app.services.auth import authenticate_user, hash_password, manager, require_admin, require_user, verify_password
 from app.services.backup_restore import BackupValidationError, backup_bytes, restore_backup
 from app.services.bootstrap import bootstrap_data, ensure_app_settings
@@ -66,6 +66,10 @@ def _relative_minutes(dt):
 
 
 templates.env.filters["relative_minutes"] = _relative_minutes
+
+
+def _to_iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
 
 
 @app.on_event("startup")
@@ -202,6 +206,24 @@ def _dashboard_metrics(db: Session) -> dict:
 
 
 
+
+
+def _dispatch_task(task_callable, *, task_name: str) -> tuple[bool, str]:
+    try:
+        inspector = celery_app.control.inspect(timeout=1.0)
+        ping = inspector.ping() or {}
+        if not ping:
+            return False, f"{task_name}_not_queued_worker_unreachable"
+    except Exception:
+        return False, f"{task_name}_not_queued_worker_unreachable"
+
+    try:
+        result = task_callable.delay()
+        return True, str(getattr(result, "id", "queued"))
+    except Exception as exc:
+        logger.exception("Failed to enqueue %s: %s", task_name, exc)
+        return False, f"{task_name}_enqueue_error:{exc}"
+
 def _safe_next_url(next_url: str | None) -> str:
     candidate = (next_url or "").strip()
     if not candidate:
@@ -310,27 +332,36 @@ def homepage(request: Request, db: Session = Depends(get_db), current_user=Depen
 
 
 def _homepage_sections(db: Session, region: str) -> dict[str, list[Cluster]]:
-    base = db.scalars(select(Cluster).order_by(desc(Cluster.score), desc(Cluster.updated_at)).limit(120)).all()
+    base = db.scalars(select(Cluster).order_by(desc(Cluster.score), desc(Cluster.updated_at)).limit(140)).all()
 
     def _fresh(items: list[Cluster]) -> list[Cluster]:
         return [c for c in items if (c.cluster_state or "") != "archived"]
 
-    top_story_now = _fresh(base)[:1]
+    def _editorial_rank(c: Cluster) -> float:
+        freshness = c.freshness_score or 0.0
+        confidence = c.source_confidence_score or 0.0
+        diversity = min(1.0, (c.corroboration_count or 0) / 6.0)
+        return (c.importance_score or 0.0) * 0.45 + (c.score or 0.0) * 0.2 + freshness * 0.2 + confidence * 0.1 + diversity * 0.05
+
+    fresh = sorted(_fresh(base), key=_editorial_rank, reverse=True)
+    top_story_now = fresh[:1]
+    major_stories = [c for c in fresh if c.cluster_state in {"major", "developing"}][:4]
     developing_near_you = [
         c
-        for c in _fresh(base)
+        for c in fresh
         if c.local_relevance_score >= 0.25 and (c.cluster_state in {"emerging", "developing", "major"})
     ][:6]
-    major_us = [c for c in _fresh(base) if c.cluster_state in {"major", "developing"} and looks_us_focused(c)][:6]
-    major_world = [c for c in _fresh(base) if c.cluster_state in {"major", "developing"} and not looks_us_focused(c)][:6]
-    fast_moving = sorted(_fresh(base), key=lambda c: (c.velocity_score, c.score), reverse=True)[:6]
-    recently_updated = sorted(_fresh(base), key=lambda c: c.updated_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)[:6]
+    major_us = [c for c in fresh if c.cluster_state in {"major", "developing"} and looks_us_focused(c)][:6]
+    major_world = [c for c in fresh if c.cluster_state in {"major", "developing"} and not looks_us_focused(c)][:6]
+    fast_moving = sorted(fresh, key=lambda c: (c.velocity_score, _editorial_rank(c)), reverse=True)[:6]
+    recently_updated = sorted(fresh, key=lambda c: c.updated_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)[:6]
 
     if region and not developing_near_you:
-        developing_near_you = [c for c in _fresh(base) if c.cluster_state in {"developing", "major"}][:6]
+        developing_near_you = [c for c in fresh if c.cluster_state in {"developing", "major"}][:6]
 
     return {
         "top_story_now": top_story_now,
+        "major_stories": major_stories,
         "developing_near_you": developing_near_you,
         "major_us": major_us,
         "major_world": major_world,
@@ -351,6 +382,24 @@ def cluster_detail(slug: str, request: Request, db: Session = Depends(get_db), c
         select(SocialItem).where(SocialItem.cluster_id == cluster.id).order_by(desc(SocialItem.created_at)).limit(20)
     ).all()
     official_responses, public_reaction = split_social_sections(social_items)
+    source_breakdown = db.execute(
+        select(Source.name, Source.source_tier, Source.source_type, func.count(Article.id))
+        .join(Article, Article.source_id == Source.id)
+        .where(Article.cluster_id == cluster.id)
+        .group_by(Source.name, Source.source_tier, Source.source_type)
+        .order_by(Source.source_tier.asc(), func.count(Article.id).desc())
+        .limit(12)
+    ).all()
+    recent_events = db.scalars(
+        select(ClusterEvent)
+        .where(ClusterEvent.cluster_id == cluster.id)
+        .order_by(desc(ClusterEvent.created_at))
+        .limit(20)
+    ).all()
+    significant_events = [
+        e for e in recent_events
+        if e.event_type in {"article_attached", "cluster_created", "enrichment_status"}
+    ][:10]
     settings = db.scalar(select(AppSetting).limit(1))
     return templates.TemplateResponse(
         request,
@@ -361,6 +410,8 @@ def cluster_detail(slug: str, request: Request, db: Session = Depends(get_db), c
             "articles": articles,
             "official_responses": official_responses,
             "public_reaction": public_reaction,
+            "source_breakdown": source_breakdown,
+            "significant_events": significant_events,
             "title": cluster.title,
             "current_user": current_user,
             "bootstrap_pending": not bool(settings and settings.miniflux_bootstrap_completed),
@@ -373,14 +424,60 @@ def search(q: str = "", request: Request = None, db: Session = Depends(get_db), 
     if not _is_setup_completed(db):
         return RedirectResponse("/setup/1", status_code=303)
     meili = MeiliService()
-    results = {"clusters": [], "articles": []}
+    results = {"clusters": [], "articles": [], "fallback_reason": None}
     settings = db.scalar(select(AppSetting).limit(1))
     if q:
         try:
             results = meili.search(q)
+            results["fallback_reason"] = None
         except Exception as exc:
             logger.warning("Search failed due to Meilisearch error: %s", exc)
-            results = {"clusters": [], "articles": []}
+            like_q = f"%{q.strip()}%"
+            cluster_rows = db.scalars(
+                select(Cluster)
+                .where(
+                    (Cluster.title.ilike(like_q))
+                    | (Cluster.ai_summary.ilike(like_q))
+                    | (Cluster.why_it_matters.ilike(like_q))
+                )
+                .order_by(desc(Cluster.score), desc(Cluster.updated_at))
+                .limit(20)
+            ).all()
+            article_rows = db.scalars(
+                select(Article)
+                .where(
+                    (Article.title.ilike(like_q))
+                    | (Article.summary.ilike(like_q))
+                    | (Article.extracted_text.ilike(like_q))
+                )
+                .order_by(desc(Article.published_at))
+                .limit(20)
+            ).all()
+            results = {
+                "clusters": [
+                    {
+                        "cluster_id": c.id,
+                        "slug": c.slug,
+                        "title": c.title,
+                        "ai_summary": c.ai_summary,
+                        "why_it_matters": c.why_it_matters,
+                        "score": c.score,
+                    }
+                    for c in cluster_rows
+                ],
+                "articles": [
+                    {
+                        "article_id": a.id,
+                        "cluster_id": a.cluster_id,
+                        "title": a.title,
+                        "source_name": a.source_name,
+                        "published_at": a.published_at.isoformat() if a.published_at else None,
+                        "url": a.canonical_url,
+                    }
+                    for a in article_rows
+                ],
+                "fallback_reason": "Using database fallback search because Meilisearch was unavailable.",
+            }
     return templates.TemplateResponse(
         request,
         "search.html",
@@ -393,6 +490,36 @@ def search(q: str = "", request: Request = None, db: Session = Depends(get_db), 
             "bootstrap_pending": not bool(settings and settings.miniflux_bootstrap_completed),
         },
     )
+
+
+@app.get("/api/live/home")
+def live_home(db: Session = Depends(get_db), _: object = Depends(require_user)) -> dict:
+    latest_cluster = db.scalar(select(Cluster).order_by(desc(Cluster.updated_at)).limit(1))
+    updated_30m = datetime.now(timezone.utc) - timedelta(minutes=30)
+    changed_clusters = int(db.scalar(select(func.count(Cluster.id)).where(Cluster.updated_at >= updated_30m)) or 0)
+    active_developing = int(db.scalar(select(func.count(Cluster.id)).where(Cluster.cluster_state.in_(["developing", "major"]))) or 0)
+    svc_state = db.scalar(select(ServiceState).where(ServiceState.id == 1))
+    return {
+        "latest_cluster_updated_at": _to_iso(latest_cluster.updated_at if latest_cluster else None),
+        "changed_clusters_30m": changed_clusters,
+        "active_developing": active_developing,
+        "last_pipeline_finished_at": _to_iso(svc_state.last_pipeline_finished_at if svc_state else None),
+        "last_pipeline_stage": svc_state.last_pipeline_stage if svc_state else None,
+    }
+
+
+@app.get("/api/live/clusters/{slug}")
+def live_cluster(slug: str, db: Session = Depends(get_db), _: object = Depends(require_user)) -> dict:
+    cluster = db.scalar(select(Cluster).where(Cluster.slug == slug))
+    if not cluster:
+        raise HTTPException(status_code=404, detail="cluster_not_found")
+    latest_article = db.scalar(select(Article).where(Article.cluster_id == cluster.id).order_by(desc(Article.published_at)).limit(1))
+    return {
+        "updated_at": _to_iso(cluster.updated_at),
+        "what_changed_count": len(cluster.what_changed or []),
+        "state": cluster.cluster_state,
+        "latest_article_published_at": _to_iso(latest_article.published_at if latest_article else None),
+    }
 
 
 @app.get("/settings", response_class=HTMLResponse)
@@ -469,6 +596,12 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db), current_use
     svc_state = db.scalar(select(ServiceState).where(ServiceState.id == 1))
     health_status = health()
     metrics = _dashboard_metrics(db)
+    recent_enrichment = db.scalars(
+        select(ClusterEvent)
+        .where(ClusterEvent.event_type == "enrichment_status")
+        .order_by(desc(ClusterEvent.created_at))
+        .limit(25)
+    ).all()
     return templates.TemplateResponse(
         request,
         "admin_dashboard.html",
@@ -481,6 +614,9 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db), current_use
             "settings": settings,
             "svc_state": svc_state,
             "metrics": metrics,
+            "recent_enrichment": recent_enrichment,
+            "queue_error": request.query_params.get("queue_error"),
+            "queue_ok": request.query_params.get("queue_ok"),
         },
     )
 
@@ -515,20 +651,24 @@ def update_settings(
 
 @app.post("/pipeline/run")
 def trigger_pipeline(_: object = Depends(require_admin)):
-    task = run_pipeline_task.delay()
-    return {"queued": True, "task_id": task.id}
+    ok, token = _dispatch_task(run_pipeline_task, task_name="pipeline")
+    return {"queued": ok, "task_id": token if ok else None, "error": None if ok else token}
 
 
 @app.post("/admin/run-pipeline")
 def admin_run_pipeline(_: object = Depends(require_admin)):
-    run_pipeline_task.delay()
-    return RedirectResponse("/admin", status_code=303)
+    ok, token = _dispatch_task(run_pipeline_task, task_name="pipeline")
+    if ok:
+        return RedirectResponse(f"/admin?queue_ok=Pipeline+queued:+{token}", status_code=303)
+    return RedirectResponse(f"/admin?queue_error={token}", status_code=303)
 
 
 @app.post("/admin/retry-bootstrap")
 def admin_retry_bootstrap(_: object = Depends(require_admin)):
-    retry_miniflux_bootstrap_task.delay()
-    return RedirectResponse("/admin", status_code=303)
+    ok, token = _dispatch_task(retry_miniflux_bootstrap_task, task_name="bootstrap_retry")
+    if ok:
+        return RedirectResponse(f"/admin?queue_ok=Bootstrap+retry+queued:+{token}", status_code=303)
+    return RedirectResponse(f"/admin?queue_error={token}", status_code=303)
 
 
 @app.get("/backups", response_class=HTMLResponse)
@@ -594,6 +734,14 @@ def sources_page(request: Request, db: Session = Depends(get_db), current_user=D
 
     source_rows = db.scalars(select(Source).order_by(Source.source_tier.asc(), Source.name.asc())).all()
     source_by_url = {s.feed_url: s for s in source_rows}
+    source_stats = {
+        "total": len(source_rows),
+        "enabled": len([s for s in source_rows if s.enabled]),
+        "by_type": {},
+    }
+    for src in source_rows:
+        st = src.source_type or "unknown"
+        source_stats["by_type"][st] = source_stats["by_type"].get(st, 0) + 1
     settings = db.scalar(select(AppSetting).limit(1))
     return templates.TemplateResponse(
         request,
@@ -607,15 +755,23 @@ def sources_page(request: Request, db: Session = Depends(get_db), current_user=D
             "source_by_url": source_by_url,
             "error": error or request.query_params.get("error"),
             "ok": request.query_params.get("ok"),
+            "source_stats": source_stats,
         },
     )
 
 
 @app.post("/sources/add")
-def add_source(feed_url: str = Form(...), _: object = Depends(require_admin)):
+def add_source(feed_url: str = Form(...), title: str = Form(""), db: Session = Depends(get_db), _: object = Depends(require_admin)):
     try:
-        MinifluxClient().add_feed(feed_url=feed_url.strip())
-        return RedirectResponse("/sources?ok=Feed+added", status_code=303)
+        client = MinifluxClient()
+        if not client.validate_feed_url(feed_url.strip()):
+            return RedirectResponse("/sources?error=Invalid+feed+URL", status_code=303)
+        result = client.add_feed(feed_url=feed_url.strip(), title=title.strip() or None)
+        feeds = client.list_feeds()
+        _sync_sources_from_miniflux(db, feeds)
+        if result.get("created"):
+            return RedirectResponse("/sources?ok=Feed+added", status_code=303)
+        return RedirectResponse("/sources?ok=Feed+already+exists", status_code=303)
     except Exception as exc:
         return RedirectResponse(f"/sources?error={str(exc)}", status_code=303)
 
@@ -629,9 +785,12 @@ def seed_default_sources(db: Session = Depends(get_db), _: object = Depends(requ
     created = seed_source_registry(db)
     return RedirectResponse(f"/sources?ok=Seeded+{created}+default+sources", status_code=303)
 @app.post("/sources/remove")
-def remove_source(feed_id: int = Form(...), _: object = Depends(require_admin)):
+def remove_source(feed_id: int = Form(...), db: Session = Depends(get_db), _: object = Depends(require_admin)):
     try:
-        MinifluxClient().delete_feed(feed_id)
+        client = MinifluxClient()
+        client.delete_feed(feed_id)
+        feeds = client.list_feeds()
+        _sync_sources_from_miniflux(db, feeds)
         return RedirectResponse("/sources?ok=Feed+removed", status_code=303)
     except Exception as exc:
         return RedirectResponse(f"/sources?error={str(exc)}", status_code=303)
@@ -649,12 +808,48 @@ def toggle_source(feed_id: int = Form(...), disabled: bool = Form(False), db: Se
         return RedirectResponse(f"/sources?error={str(exc)}", status_code=303)
 
 
+
+
+@app.post("/sources/bulk-toggle")
+def bulk_toggle_sources(
+    source_type: str = Form("all"),
+    geography: str = Form("all"),
+    disabled: bool = Form(False),
+    db: Session = Depends(get_db),
+    _: object = Depends(require_admin),
+):
+    stmt = select(Source)
+    if source_type != "all":
+        stmt = stmt.where(Source.source_type == source_type)
+    if geography != "all":
+        stmt = stmt.where(Source.geography == geography)
+    sources = db.scalars(stmt).all()
+    if not sources:
+        return RedirectResponse("/sources?ok=No+matching+sources", status_code=303)
+
+    client = MinifluxClient()
+    updated = 0
+    for source in sources:
+        if source.miniflux_feed_id:
+            try:
+                client.set_feed_disabled(source.miniflux_feed_id, disabled)
+            except Exception:
+                continue
+        source.enabled = not disabled
+        updated += 1
+    db.commit()
+    return RedirectResponse(f"/sources?ok=Updated+{updated}+sources", status_code=303)
+
+
 @app.post("/sources/weight")
 def update_source_weight(
     feed_url: str = Form(...),
     priority_weight: float = Form(1.0),
     source_tier: int = Form(3),
     poll_frequency_minutes: int = Form(30),
+    source_type: str = Form("major_outlet"),
+    topic: str = Form("general"),
+    geography: str = Form("global"),
     db: Session = Depends(get_db),
     _: object = Depends(require_admin),
 ):
@@ -664,16 +859,26 @@ def update_source_weight(
         source.weight = source.priority_weight
         source.source_tier = max(1, min(source_tier, 3))
         source.poll_frequency_minutes = max(5, min(poll_frequency_minutes, 240))
+        source.source_type = source_type.strip() or source.source_type
+        source.topic = topic.strip() or source.topic
+        source.geography = geography.strip() or source.geography
+        source.region = source.geography
         db.commit()
     return RedirectResponse("/sources?ok=Source+settings+updated", status_code=303)
 
 
 @app.post("/sources/import-opml")
-async def import_opml(file: UploadFile = File(...), _: object = Depends(require_admin)):
+async def import_opml(file: UploadFile = File(...), db: Session = Depends(get_db), _: object = Depends(require_admin)):
     try:
         text = (await file.read()).decode("utf-8")
-        MinifluxClient().import_opml(text)
-        return RedirectResponse("/sources?ok=OPML+imported", status_code=303)
+        client = MinifluxClient()
+        result = client.import_opml(text)
+        feeds = client.list_feeds()
+        _sync_sources_from_miniflux(db, feeds)
+        return RedirectResponse(
+            f"/sources?ok=OPML+imported:+created={result.get('created',0)}+skipped={result.get('skipped',0)}+invalid={result.get('invalid',0)}",
+            status_code=303,
+        )
     except Exception as exc:
         return RedirectResponse(f"/sources?error={str(exc)}", status_code=303)
 

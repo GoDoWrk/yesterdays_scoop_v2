@@ -6,42 +6,64 @@
   <div class="grid gap-6 lg:grid-cols-[2fr_1fr]">
     <div class="space-y-6">
       <article class="panel">
-        <p class="meta">AI-generated summary <span class="help-tip">A quick plain-language synthesis of linked reporting.</span></p>
-        <p class="mt-3 text-slate-200">{{ cluster.ai_summary or "Summary pending." }}</p>
+        <p class="meta">Summary</p>
+        <p class="mt-3 text-slate-200">{{ cluster.ai_summary or "We have linked reporting on this story, but AI synthesis is temporarily unavailable." }}</p>
       </article>
       <article class="panel">
-        <p class="meta">Why it matters <span class="help-tip">Short context on why this story is important.</span></p>
-        <p class="mt-3 text-slate-200">{{ cluster.why_it_matters or "Waiting for contextual synthesis." }}</p>
+        <p class="meta">Why it matters</p>
+        <p class="mt-3 text-slate-200">{{ cluster.why_it_matters or "No verified consequence-oriented analysis is available yet." }}</p>
       </article>
       <article class="panel">
-        <p class="meta">What changed <span class="help-tip">Concrete updates since the last pipeline cycle.</span></p>
+        <p class="meta">What changed</p>
+        {% if cluster.what_changed %}
         <ul class="mt-3 list-disc space-y-2 pl-6 text-slate-200">
           {% for item in cluster.what_changed or [] %}
             <li>{{ item }}</li>
           {% endfor %}
         </ul>
+        {% else %}
+          <p class="mt-2 text-sm text-slate-400">No material delta detected in newly attached coverage.</p>
+        {% endif %}
       </article>
 
+      {% if significant_events %}
       <article class="panel">
-        <p class="meta">Official responses <span class="help-tip">Reactions from verified/official public figures or accounts.</span></p>
-        {% if official_responses %}
+        <p class="meta">Story progression</p>
+        <ul class="mt-3 space-y-2 text-sm text-slate-300">
+          {% for event in significant_events %}
+            <li>
+              <span class="text-slate-400">{{ event.created_at.strftime('%Y-%m-%d %H:%M UTC') if event.created_at else '' }}</span>
+              · {{ event.event_type.replace('_', ' ') }}
+              {% if event.details and event.details.get('reason') %} · {{ event.details.get('reason') }}{% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      </article>
+      {% endif %}
+
+      {% if official_responses %}
+      <article class="panel">
+        <p class="meta">Official responses</p>
         <ul class="mt-3 space-y-3 text-sm">
           {% for item in official_responses %}
           <li class="rounded-xl border border-slate-800 p-3">
             <p class="text-slate-200"><strong>{{ item.author or 'Unknown' }}</strong> · {{ item.platform|upper }} · {{ item.created_at.strftime('%Y-%m-%d %H:%M UTC') if item.created_at else '' }}</p>
             <p class="mt-1 text-slate-300">{{ item.content[:280] }}{% if item.content|length > 280 %}...{% endif %}</p>
-            <a class="mt-2 inline-flex text-indigo-300" href="{{ item.url }}" target="_blank" rel="noopener">View reaction →</a>
+            <a class="mt-2 inline-flex text-indigo-300" href="{{ item.url }}" target="_blank" rel="noopener">View response →</a>
           </li>
           {% endfor %}
         </ul>
-        {% else %}
-          <p class="mt-2 text-sm text-slate-400">No official responses captured yet.</p>
-        {% endif %}
       </article>
-
+      {% else %}
       <article class="panel">
-        <p class="meta">Public reaction <span class="help-tip">Community discussion context, separate from reporting.</span></p>
-        {% if public_reaction %}
+        <p class="meta">Official responses</p>
+        <p class="mt-2 text-sm text-slate-400">No verified official response identified yet.</p>
+      </article>
+      {% endif %}
+
+      {% if public_reaction %}
+      <article class="panel">
+        <p class="meta">Public reaction</p>
         <ul class="mt-3 space-y-3 text-sm">
           {% for item in public_reaction %}
           <li class="rounded-xl border border-slate-800 p-3">
@@ -51,10 +73,9 @@
           </li>
           {% endfor %}
         </ul>
-        {% else %}
-          <p class="mt-2 text-sm text-slate-400">No public reaction captured yet.</p>
-        {% endif %}
       </article>
+      {% endif %}
+
       <article class="panel">
         <p class="meta">Timeline</p>
         <ol class="mt-3 space-y-3">
@@ -69,17 +90,27 @@
     </div>
     <aside class="space-y-4">
       <article class="panel">
-        <p class="meta">Trust & Provenance</p>
-        <p class="mt-2 text-sm text-slate-300">{{ cluster.source_count }} sources in this cluster.</p>
+        <p class="meta">Trust & Evidence</p>
+        <p class="mt-2 text-sm text-slate-300">Supporting sources: <strong>{{ cluster.source_count }}</strong></p>
+        <p class="text-sm text-slate-300">Source diversity: <strong>{{ cluster.corroboration_count or 0 }}</strong></p>
+        <p class="text-sm text-slate-300">Freshness score: <strong>{{ '%.2f'|format(cluster.freshness_score or 0) }}</strong></p>
+
+        {% if source_breakdown %}
+        <div class="mt-4">
+          <p class="meta">Top-trust source mix</p>
+          <ul class="mt-2 space-y-2 text-sm text-slate-300">
+            {% for name, tier, source_type, article_count in source_breakdown %}
+            <li>{{ name }} · tier {{ tier }} · {{ source_type }} · {{ article_count }} article(s)</li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+
         <ul class="mt-3 space-y-2 text-sm">
           {% for url in cluster.source_urls or [] %}
             <li><a href="{{ url }}" class="text-indigo-300">{{ url }}</a></li>
           {% endfor %}
         </ul>
-      </article>
-      <article class="panel">
-        <p class="meta">Compare Coverage</p>
-        <p class="mt-2 text-sm text-slate-300">Use the source list to contrast framing, updates, and emphasis across publishers.</p>
       </article>
     </aside>
   </div>

@@ -4,9 +4,11 @@ from app.services.miniflux_client import MinifluxClient
 
 
 class DummyResponse:
-    def __init__(self, payload=None, status_code=200):
+    def __init__(self, payload=None, status_code=200, text=""):
         self._payload = payload or {}
         self.status_code = status_code
+        self.text = text
+        self.content = text.encode("utf-8") if text else (b"{}" if payload is not None else b"")
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -63,6 +65,8 @@ class DummyClient:
         if url.endswith("/v1/feeds"):
             self.created_feeds.append(kwargs.get("json", {}).get("feed_url"))
             return DummyResponse({}, status_code=201)
+        if url.endswith("/v1/feeds/import"):
+            return DummyResponse({"created": 1, "existing": 0, "invalid": 0}, status_code=201)
         return DummyResponse({})
 
     def put(self, *args, **kwargs):
@@ -111,3 +115,19 @@ def test_bootstrap_is_idempotent_for_existing_feeds(monkeypatch):
 
     assert result["created"] == 0
     assert result["skipped"] == 1
+
+
+def test_import_opml_supports_bulk_parsing(monkeypatch):
+    import app.services.miniflux_client as mod
+
+    monkeypatch.setattr(mod.httpx, "Client", DummyClient)
+    client = MinifluxClient(api_key="token")
+    result = client.import_opml("""<?xml version="1.0"?><opml><body><outline text="A" xmlUrl="https://example.com/rss"/></body></opml>""")
+
+    assert result["created"] >= 1
+
+
+def test_parse_opml_urls_dedupes_and_validates(monkeypatch):
+    client = MinifluxClient(api_key="token")
+    urls = client.parse_opml_urls("""<?xml version="1.0"?><opml><body><outline text="A" xmlUrl="https://example.com/rss"/><outline text="A2" xmlUrl="https://example.com/rss"/><outline text="bad" xmlUrl="ftp://example.com/rss"/></body></opml>""")
+    assert len(urls) == 1

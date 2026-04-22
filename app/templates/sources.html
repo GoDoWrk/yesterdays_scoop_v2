@@ -3,11 +3,11 @@
 <section class="space-y-6">
   <div class="flex items-center justify-between">
     <div>
-      <h1 class="text-3xl font-semibold">Source Management <a class="help-tip" href="/docs" onclick="return false;">What is this? Manage source trust and polling frequency.</a></h1>
-      <p class="mt-1 text-sm text-slate-300">Manage source tiers, polling cadence, and health synced with Miniflux.</p>
+      <h1 class="text-3xl font-semibold">Source Management</h1>
+      <p class="mt-1 text-sm text-slate-300">Layered sourcing across wire, major, analysis, niche, regional/local, and discovery feeds.</p>
     </div>
     <div class="flex gap-2">
-      <form method="post" action="/sources/seed-defaults"><button class="pill" type="submit">Seed defaults</button></form>
+      <form method="post" action="/sources/seed-defaults"><button class="pill" type="submit">Seed curated defaults</button></form>
       <a class="pill" href="/sources/export-opml">Export OPML</a>
     </div>
   </div>
@@ -15,23 +15,56 @@
   {% if error %}<div class="rounded-xl border border-rose-700/40 bg-rose-900/20 px-4 py-3 text-sm text-rose-200">{{ error }}</div>{% endif %}
   {% if ok %}<div class="rounded-xl border border-emerald-700/40 bg-emerald-900/20 px-4 py-3 text-sm text-emerald-200">{{ ok }}</div>{% endif %}
 
+  <article class="panel">
+    <p class="meta">Coverage snapshot</p>
+    <p class="mt-2 text-sm text-slate-300">Total sources: <strong>{{ source_stats.total }}</strong> · Enabled: <strong>{{ source_stats.enabled }}</strong></p>
+    <p class="mt-1 text-sm text-slate-400">
+      {% for key, value in source_stats.by_type.items() %}
+        {{ key }}: {{ value }}{% if not loop.last %} · {% endif %}
+      {% endfor %}
+    </p>
+  </article>
+
   <div class="grid gap-4 lg:grid-cols-2">
     <article class="panel space-y-3">
       <p class="meta">Add feed</p>
       <form method="post" action="/sources/add" class="space-y-3">
         <input class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="feed_url" placeholder="https://example.com/rss.xml" required />
+        <input class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="title" placeholder="Optional title" />
         <button class="pill">Add source</button>
       </form>
     </article>
 
     <article class="panel space-y-3">
-      <p class="meta">Import OPML</p>
+      <p class="meta">Import OPML (large batches supported)</p>
       <form method="post" action="/sources/import-opml" enctype="multipart/form-data" class="space-y-3">
         <input class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" type="file" name="file" accept=".opml,text/xml" required />
         <button class="pill">Import OPML</button>
       </form>
     </article>
   </div>
+
+  <article class="panel space-y-3">
+    <p class="meta">Bulk enable/disable</p>
+    <form method="post" action="/sources/bulk-toggle" class="grid gap-2 md:grid-cols-4">
+      <select class="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="source_type">
+        <option value="all">All source types</option>
+        <option value="wire">Wire</option>
+        <option value="major_outlet">Major outlet</option>
+        <option value="analysis">Analysis</option>
+        <option value="niche">Niche</option>
+        <option value="regional">Regional</option>
+        <option value="local">Local</option>
+        <option value="aggregator">Aggregator</option>
+      </select>
+      <input class="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="geography" placeholder="all or e.g. arizona" value="all" />
+      <select class="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="disabled">
+        <option value="false">Enable matching</option>
+        <option value="true">Disable matching</option>
+      </select>
+      <button class="pill" type="submit">Apply bulk update</button>
+    </form>
+  </article>
 
   <article class="panel">
     <p class="meta">Current sources</p>
@@ -40,11 +73,12 @@
         <thead>
           <tr class="text-left text-slate-400">
             <th class="py-2 pr-4">Title</th>
-            <th class="py-2 pr-4">Tier <span class="help-tip">Tier 1 is highest-trust/priority, Tier 3 is lower priority.</span></th>
+            <th class="py-2 pr-4">Tier</th>
+            <th class="py-2 pr-4">Type</th>
+            <th class="py-2 pr-4">Topic</th>
+            <th class="py-2 pr-4">Geo</th>
             <th class="py-2 pr-4">Health</th>
             <th class="py-2 pr-4">Last success</th>
-            <th class="py-2 pr-4">Failure</th>
-            <th class="py-2 pr-4">Latency</th>
             <th class="py-2 pr-4">Controls</th>
             <th class="py-2 pr-4">Actions</th>
           </tr>
@@ -58,16 +92,20 @@
               <div class="text-xs text-slate-400 break-all">{{ feed.feed_url }}</div>
             </td>
             <td class="py-3 pr-4">{{ source.source_tier if source else 3 }}</td>
+            <td class="py-3 pr-4">{{ source.source_type if source else 'major_outlet' }}</td>
+            <td class="py-3 pr-4">{{ source.topic if source else 'general' }}</td>
+            <td class="py-3 pr-4">{{ source.geography if source else 'global' }}</td>
             <td class="py-3 pr-4">{{ source.health_status if source else 'unknown' }}</td>
             <td class="py-3 pr-4 text-xs">{{ source.last_successful_fetch.strftime('%Y-%m-%d %H:%M UTC') if source and source.last_successful_fetch else 'never' }}</td>
-            <td class="py-3 pr-4">{{ source.failure_count if source else 0 }}</td>
-            <td class="py-3 pr-4">{{ '%.0f'|format(source.average_latency_ms or 0) if source else '0' }}ms</td>
             <td class="py-3 pr-4">
               <form method="post" action="/sources/weight" class="grid grid-cols-3 gap-2">
                 <input type="hidden" name="feed_url" value="{{ feed.feed_url }}" />
                 <input class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1" type="number" name="source_tier" min="1" max="3" value="{{ source.source_tier if source else 3 }}" />
                 <input class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1" type="number" name="priority_weight" step="0.1" min="0.1" max="10" value="{{ source.priority_weight if source else 1.0 }}" />
                 <input class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1" type="number" name="poll_frequency_minutes" min="5" max="240" value="{{ source.poll_frequency_minutes if source else 30 }}" />
+                <input class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1" name="source_type" value="{{ source.source_type if source else 'major_outlet' }}" />
+                <input class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1" name="topic" value="{{ source.topic if source else 'general' }}" />
+                <input class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1" name="geography" value="{{ source.geography if source else 'global' }}" />
                 <button class="pill col-span-3" type="submit">Save</button>
               </form>
             </td>

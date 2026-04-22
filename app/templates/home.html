@@ -2,21 +2,49 @@
 {% block content %}
 <section class="space-y-8">
   <div class="rounded-3xl border border-slate-800 bg-gradient-to-br from-indigo-900/40 to-slate-900 p-8 shadow-2xl">
-    <p class="text-xs uppercase tracking-[0.2em] text-indigo-300">Top story now <span class="help-tip">This is the highest-ranked active cluster right now.</span></p>
+    <p class="text-xs uppercase tracking-[0.2em] text-indigo-300">Top story now</p>
     {% if hero %}
       <h1 class="mt-2 text-4xl font-semibold leading-tight">{{ hero.title }}</h1>
-      <p class="mt-2 text-xs uppercase text-slate-400">State: {{ hero.cluster_state }} · Score {{ '%.2f'|format(hero.score or 0) }}</p>
-      <p class="mt-4 text-slate-300">{{ hero.ai_summary or "Summary pending. Run pipeline to enrich this cluster." }}</p>
-      <div class="mt-6 flex gap-6 text-sm text-slate-400">
-        <span>{{ hero.source_count }} sources <span class="help-tip">Source count shows how many distinct source URLs are in this cluster.</span></span>
-        <span>Updated {{ hero.updated_at|relative_minutes }} <span class="help-tip">Recent updates usually indicate active story movement.</span></span>
+      <p class="mt-2 text-xs uppercase text-slate-400">{{ hero.cluster_state }} · Updated {{ hero.updated_at|relative_minutes }} · Score {{ '%.2f'|format(hero.score or 0) }}</p>
+      <p class="mt-4 text-slate-300">{{ hero.ai_summary or "Coverage exists, but concise synthesis is still processing." }}</p>
+      <p class="mt-2 text-sm text-slate-400">Why it matters: {{ hero.why_it_matters or "No consequence-oriented synthesis is verified yet." }}</p>
+      {% if hero.what_changed and hero.what_changed|length > 0 %}
+      <p class="mt-2 text-sm text-indigo-200">Recently changed: {{ hero.what_changed[0] }}</p>
+      {% endif %}
+      <div class="mt-6 flex flex-wrap gap-4 text-sm text-slate-400">
+        <span>{{ hero.source_count }} sources</span>
+        <span>{{ hero.corroboration_count or 0 }} outlets corroborating</span>
+        <span class="rounded-full border border-emerald-700/60 bg-emerald-900/20 px-2 py-0.5 text-emerald-200">{{ 'Actively developing' if hero.cluster_state in ['developing','major'] else 'Monitoring' }}</span>
         <a href="/clusters/{{ hero.slug }}" class="text-indigo-300">Open cluster →</a>
       </div>
     {% else %}
       <h1 class="mt-2 text-3xl font-semibold">No stories yet</h1>
-      <p class="mt-2 text-slate-300">Trigger the pipeline to ingest sources and generate clusters.</p>
+      <p class="mt-2 text-slate-300">The briefing will populate automatically as ingestion catches up.</p>
     {% endif %}
   </div>
+
+  {% if sections.get('major_stories', []) %}
+  <div>
+    <h2 class="text-2xl font-semibold">Major stories</h2>
+    <div class="mt-4 grid gap-4 md:grid-cols-2">
+      {% for cluster in sections.get('major_stories', []) %}
+      <article class="cluster-card" data-cluster-slug="{{ cluster.slug }}" data-updated-at="{{ cluster.updated_at.isoformat() if cluster.updated_at else '' }}">
+        <div class="flex items-center justify-between text-xs uppercase text-slate-400">
+          <span>{{ cluster.cluster_state }}</span>
+          <span>{{ cluster.updated_at|relative_minutes }}</span>
+        </div>
+        <h3 class="mt-3 text-xl font-medium leading-snug">{{ cluster.title }}</h3>
+        <p class="mt-2 line-clamp-3 text-sm text-slate-300">{{ cluster.ai_summary or cluster.why_it_matters or "Story intelligence is still stabilizing for this cluster." }}</p>
+        {% if cluster.what_changed and cluster.what_changed|length > 0 %}
+          <p class="mt-2 text-xs text-indigo-200">New since last run: {{ cluster.what_changed[0] }}</p>
+        {% endif %}
+        <p class="mt-2 text-xs text-slate-400">Impact {{ '%.2f'|format(cluster.impact_score or 0) }} · Confidence {{ '%.2f'|format(cluster.source_confidence_score or 0) }} · Freshness {{ '%.2f'|format(cluster.freshness_score or 0) }}</p>
+        <a class="mt-4 inline-flex text-sm text-indigo-300" href="/clusters/{{ cluster.slug }}">Expand coverage →</a>
+      </article>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
 
   {% set section_titles = {
     'developing_near_you': 'Developing near you',
@@ -33,14 +61,19 @@
       <h2 class="text-2xl font-semibold">{{ section_titles[key] }}</h2>
       <div class="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {% for cluster in clusters %}
-        <article class="cluster-card">
+        <article class="cluster-card" data-cluster-slug="{{ cluster.slug }}" data-updated-at="{{ cluster.updated_at.isoformat() if cluster.updated_at else '' }}">
           <div class="flex items-center justify-between text-xs uppercase text-slate-400">
             <span>{{ cluster.cluster_state }}</span>
             <span>{{ cluster.updated_at|relative_minutes }}</span>
           </div>
           <h3 class="mt-3 text-lg font-medium leading-snug">{{ cluster.title }}</h3>
-          <p class="mt-1 text-xs text-slate-400">Importance {{ '%.2f'|format(cluster.importance_score or 0) }} <span class="help-tip">Cluster score blends impact, corroboration, freshness, and confidence.</span> · Local {{ '%.2f'|format(cluster.local_relevance_score or 0) }} <span class="help-tip">Local relevance boosts stories tied to your chosen region.</span>{% if cluster.seeking_confirmation %} · Seeking confirmation{% endif %}</p>
+          <p class="mt-1 text-xs text-slate-400">Importance {{ '%.2f'|format(cluster.importance_score or 0) }} · Sources {{ cluster.source_count }} · Diversity {{ cluster.corroboration_count or 0 }}</p>
           <p class="mt-2 line-clamp-3 text-sm text-slate-300">{{ cluster.ai_summary or cluster.why_it_matters or "Coverage still stabilizing for this story." }}</p>
+          {% if cluster.what_changed and cluster.what_changed|length > 0 %}
+            <p class="mt-2 text-xs text-indigo-200">Recently changed: {{ cluster.what_changed[0] }}</p>
+          {% else %}
+            <p class="mt-2 text-xs text-slate-500">No material change signals yet.</p>
+          {% endif %}
           <a class="mt-4 inline-flex text-sm text-indigo-300" href="/clusters/{{ cluster.slug }}">Expand coverage →</a>
         </article>
         {% endfor %}
@@ -49,4 +82,24 @@
     {% endif %}
   {% endfor %}
 </section>
+
+<script>
+  (function(){
+    const keyPrefix = 'ys_seen_cluster_';
+    document.querySelectorAll('[data-cluster-slug][data-updated-at]').forEach((card)=>{
+      const slug = card.getAttribute('data-cluster-slug');
+      const updated = card.getAttribute('data-updated-at');
+      const key = keyPrefix + slug;
+      const prev = localStorage.getItem(key);
+      if (prev && updated && prev !== updated) {
+        const badge = document.createElement('span');
+        badge.className = 'mt-2 inline-block rounded-full border border-indigo-700/60 bg-indigo-900/20 px-2 py-0.5 text-xs text-indigo-200';
+        badge.textContent = 'New since your last visit';
+        card.appendChild(badge);
+      }
+      if (updated) localStorage.setItem(key, updated);
+    });
+  })();
+</script>
+
 {% endblock %}

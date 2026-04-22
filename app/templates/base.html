@@ -13,6 +13,7 @@
         <a href="/" class="text-xl font-semibold tracking-tight">Yesterday's Scoop</a>
         <div class="flex items-center gap-3 text-sm text-slate-300">
           <a href="/search" class="nav-link">Search</a>
+          <span id="livePulse" class="pill text-xs">Live · checking…</span>
           {% if current_user %}
             {% if current_user.is_admin %}
               <a href="/admin" class="nav-link">Admin</a>
@@ -20,7 +21,6 @@
               <a href="/sources" class="nav-link">Sources</a>
               <a href="/backups" class="nav-link">Backups</a>
               <a href="/settings" class="nav-link">Settings</a>
-              <form action="/admin/run-pipeline" method="post"><button class="pill">Refresh Pipeline</button></form>
             {% endif %}
             <button id="helpModeToggle" class="pill" type="button">Help tips: off</button>
             <a href="/?tour=1" class="nav-link">Take tour again</a>
@@ -35,6 +35,9 @@
         Setting up sources… this may take a moment.
       </div>
     {% endif %}
+    <div id="liveUpdateNotice" class="hidden mx-auto mt-4 max-w-7xl rounded-xl border border-indigo-700/40 bg-indigo-900/20 px-4 py-3 text-sm text-indigo-200">
+      New coverage landed. Refreshing shortly…
+    </div>
     <main class="mx-auto max-w-7xl px-6 py-8">{% block content %}{% endblock %}</main>
 
     <div id="tourOverlay" class="hidden fixed inset-0 z-50 bg-slate-950/80 p-6">
@@ -128,6 +131,56 @@
           localStorage.removeItem("ys_force_tour");
           startTour();
         }
+
+        const pulse = document.getElementById("livePulse");
+        const notice = document.getElementById("liveUpdateNotice");
+        const endpoint = window.location.pathname.startsWith("/clusters/")
+          ? `/api/live/clusters/${window.location.pathname.split("/").pop()}`
+          : "/api/live/home";
+        let baseline = null;
+
+        function updatePulse(text, cls) {
+          if (!pulse) return;
+          pulse.textContent = text;
+          pulse.classList.remove("border-emerald-700", "bg-emerald-900/20", "text-emerald-200", "border-amber-700", "bg-amber-900/20", "text-amber-200");
+          if (cls === "live") pulse.classList.add("border-emerald-700", "bg-emerald-900/20", "text-emerald-200");
+          if (cls === "stale") pulse.classList.add("border-amber-700", "bg-amber-900/20", "text-amber-200");
+        }
+
+        function changed(current) {
+          if (!baseline) return false;
+          if (current.updated_at && baseline.updated_at && current.updated_at !== baseline.updated_at) return true;
+          if (current.latest_cluster_updated_at && baseline.latest_cluster_updated_at && current.latest_cluster_updated_at !== baseline.latest_cluster_updated_at) return true;
+          if (typeof current.what_changed_count === "number" && current.what_changed_count !== baseline.what_changed_count) return true;
+          if (typeof current.changed_clusters_30m === "number" && current.changed_clusters_30m !== baseline.changed_clusters_30m) return true;
+          return false;
+        }
+
+        async function pollLive() {
+          if (document.hidden) return;
+          try {
+            const res = await fetch(endpoint, { credentials: "same-origin" });
+            if (!res.ok) return;
+            const data = await res.json();
+            if (!baseline) baseline = data;
+
+            if (data.last_pipeline_stage && data.last_pipeline_stage.includes("ingest")) {
+              updatePulse("Live · ingesting", "live");
+            } else {
+              updatePulse("Live · up to date", "live");
+            }
+
+            if (changed(data)) {
+              if (notice) notice.classList.remove("hidden");
+              setTimeout(() => window.location.reload(), 4000);
+            }
+          } catch (_e) {
+            updatePulse("Live · reconnecting", "stale");
+          }
+        }
+
+        setInterval(pollLive, 90000);
+        pollLive();
       })();
     </script>
   </body>

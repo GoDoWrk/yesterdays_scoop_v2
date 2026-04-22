@@ -93,12 +93,15 @@ def _validate_payload(payload: dict[str, Any]) -> BackupPayload:
     if not isinstance(data, dict):
         raise BackupValidationError("Invalid backup: missing data object.")
 
-    required_keys = {"app_settings", "sources", "feed_fetch_states", "clusters", "cluster_events", "social_items", "articles"}
+    required_keys = {"app_settings", "sources", "feed_fetch_states", "clusters", "cluster_events", "articles"}
+    optional_keys = {"social_items"}
     missing = [k for k in required_keys if k not in data]
     if missing:
         raise BackupValidationError(f"Invalid backup: missing sections {', '.join(missing)}")
 
-    for key in required_keys:
+    for key in required_keys | optional_keys:
+        if key not in data:
+            data[key] = []
         if not isinstance(data[key], list):
             raise BackupValidationError(f"Invalid backup: section '{key}' must be a list.")
 
