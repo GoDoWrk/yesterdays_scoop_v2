@@ -77,6 +77,28 @@ After installing prerequisites, run `./scripts/install.sh` again.
 - settings page toggles (AI/social) and safe runtime knobs (poll interval, social item limits)
 - source registry controls from `/sources` (tier/priority/frequency/enable state)
 
+
+## Operator checks and debug workflow
+When troubleshooting, use `/admin` first. It now shows:
+- ingest + cluster throughput counters
+- per-stage run timestamps (ingest/cluster/summarize/rank)
+- queue depth snapshots (active/reserved/scheduled)
+- pipeline run trend graph + run history table
+- stage-event stream with duration/error details
+- recent enrichment failures
+- source-health cues and service reachability
+
+This should make it clear whether backend jobs are progressing and whether UI gaps are due to processing or hard failure.
+
+## Seed deterministic demo stories (optional)
+For local UI validation without relying on live feeds/LLM availability:
+
+```bash
+python scripts/seed_demo_data.py
+```
+
+This adds `demo-*` stories across ready/partial/failed/concluded states and timeline events.
+
 ## Manual Compose fallback
 
 If you prefer manual setup:

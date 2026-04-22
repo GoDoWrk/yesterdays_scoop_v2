@@ -10,9 +10,11 @@ class DummyDB:
 
 
 def test_dashboard_metrics_counts():
-    db = DummyDB([3, 20, 2, 9])
+    db = DummyDB([100, 12, 3, 20, 2, 9])
     metrics = main._dashboard_metrics(db)
 
+    assert metrics["total_articles"] == 100
+    assert metrics["total_clusters"] == 12
     assert metrics["articles_1h"] == 3
     assert metrics["articles_24h"] == 20
     assert metrics["clusters_1h"] == 2

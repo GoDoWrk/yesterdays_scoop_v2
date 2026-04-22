@@ -196,6 +196,38 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+
+
+class PipelineRun(Base):
+    __tablename__ = "pipeline_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    status: Mapped[str] = mapped_column(String(24), default="running")
+    ingested_count: Mapped[int] = mapped_column(Integer, default=0)
+    clustered_count: Mapped[int] = mapped_column(Integer, default=0)
+    summarized_count: Mapped[int] = mapped_column(Integer, default=0)
+    indexed_clusters_count: Mapped[int] = mapped_column(Integer, default=0)
+    indexed_articles_count: Mapped[int] = mapped_column(Integer, default=0)
+    stage_error_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_summary: Mapped[str | None] = mapped_column(Text)
+
+
+class PipelineStageEvent(Base):
+    __tablename__ = "pipeline_stage_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("pipeline_runs.id", ondelete="CASCADE"), index=True)
+    stage: Mapped[str] = mapped_column(String(32), index=True)
+    status: Mapped[str] = mapped_column(String(24), default="success")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    details: Mapped[dict] = mapped_column(JSONB, default={})
+    error: Mapped[str | None] = mapped_column(Text)
+
 class ServiceState(Base):
     __tablename__ = "service_state"
 
@@ -207,3 +239,7 @@ class ServiceState(Base):
     last_pipeline_success: Mapped[bool | None] = mapped_column(Boolean)
     last_pipeline_stage: Mapped[str | None] = mapped_column(String(32))
     last_pipeline_error: Mapped[str | None] = mapped_column(Text)
+    last_ingest_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_clustering_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_summarization_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_ranking_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

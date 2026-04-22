@@ -13,9 +13,20 @@ class DummyDB:
             last_pipeline_finished_at=None,
             last_pipeline_stage=None,
         )
+        self.added = []
+        self._next_id = 1
 
     def commit(self):
         self.commits += 1
+
+    def add(self, obj):
+        if getattr(obj, "id", None) is None:
+            obj.id = self._next_id
+            self._next_id += 1
+        self.added.append(obj)
+
+    def refresh(self, _obj):
+        return None
 
 
 class DummySessionFactory:
@@ -45,6 +56,7 @@ def test_pipeline_updates_success_state(monkeypatch):
     )
     monkeypatch.setattr(pipeline, "summarize_clusters", lambda _db, **kwargs: [2])
     monkeypatch.setattr(pipeline, "rank_clusters", lambda _db, **kwargs: None)
+    monkeypatch.setattr(pipeline, "ingest_social_context", lambda _db, **kwargs: {"clusters": 0, "items": 0})
     monkeypatch.setattr(
         pipeline,
         "MeiliService",
@@ -56,6 +68,7 @@ def test_pipeline_updates_success_state(monkeypatch):
     assert result["ingested"] == 1
     assert db.state.last_pipeline_success is True
     assert db.state.last_pipeline_stage == "complete"
+    assert result["run_token"]
 
 
 def test_pipeline_updates_failure_state(monkeypatch):
@@ -89,6 +102,7 @@ def test_pipeline_allows_non_critical_stage_failure(monkeypatch):
     )
     monkeypatch.setattr(pipeline, "summarize_clusters", lambda _db, **kwargs: (_ for _ in ()).throw(RuntimeError("summary down")))
     monkeypatch.setattr(pipeline, "rank_clusters", lambda _db, **kwargs: None)
+    monkeypatch.setattr(pipeline, "ingest_social_context", lambda _db, **kwargs: {"clusters": 0, "items": 0})
     monkeypatch.setattr(
         pipeline,
         "MeiliService",
