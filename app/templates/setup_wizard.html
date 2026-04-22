@@ -44,6 +44,9 @@
       {% if admin_user %}<p class="text-sm text-slate-300">Current admin: <strong>{{ admin_user.username }}</strong>. Enter a new password only if you want to rotate credentials.</p>{% endif %}
       <form method="post" action="/setup/3" class="space-y-3">
         <input class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" name="admin_username" value="{{ admin_user.username if admin_user else 'admin' }}" placeholder="Admin username" />
+        {% if admin_user %}
+        <input class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" type="password" name="current_password" placeholder="Current password (required to continue)" />
+        {% endif %}
         <input class="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2" type="password" name="admin_password" placeholder="Admin password (8+ chars)" />
         <button class="pill">Continue</button>
       </form>

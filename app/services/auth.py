@@ -1,6 +1,4 @@
-import inspect
-
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, status
 from fastapi_login import LoginManager
 from passlib.context import CryptContext
 from sqlalchemy import select
@@ -31,16 +29,13 @@ def load_user(username: str):
         return db.scalar(select(User).where(User.username == username, User.is_active.is_(True)))
 
 
-async def require_user(request: Request) -> User:
-    try:
-        return await manager(request)
-    except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required") from exc
+async def require_user(current_user: User | None = Depends(manager)) -> User:
+    if not current_user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    return current_user
 
 
 async def require_admin(current_user: User = Depends(require_user)) -> User:
-    if inspect.isawaitable(current_user):
-        current_user = await current_user
     if not current_user.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return current_user

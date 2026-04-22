@@ -20,6 +20,7 @@ class DummyClient:
     def __init__(self, *args, **kwargs):
         self.created_feeds = []
         self.api_key_created = False
+        self.entry_statuses = []
 
     def __enter__(self):
         return self
@@ -33,6 +34,8 @@ class DummyClient:
         if url.endswith("/v1/categories"):
             return DummyResponse([])
         if url.endswith("/v1/entries"):
+            params = kwargs.get("params", {})
+            self.entry_statuses.append(params.get("status"))
             return DummyResponse(
                 {
                     "entries": [
@@ -69,7 +72,8 @@ class DummyClient:
 def test_get_entries_parses_payload(monkeypatch):
     import app.services.miniflux_client as mod
 
-    monkeypatch.setattr(mod.httpx, "Client", DummyClient)
+    client_instance = DummyClient()
+    monkeypatch.setattr(mod.httpx, "Client", lambda *args, **kwargs: client_instance)
     client = MinifluxClient(api_key="token")
     entries = client.get_entries(limit=1)
 
@@ -77,6 +81,7 @@ def test_get_entries_parses_payload(monkeypatch):
     assert entries[0].id == 10
     assert entries[0].feed_title == "Feed"
     assert isinstance(entries[0].published_at, datetime)
+    assert client_instance.entry_statuses == ["unread", "read"]
 
 
 def test_basic_auth_bootstrap_path_and_api_key_creation(monkeypatch):

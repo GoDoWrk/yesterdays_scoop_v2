@@ -15,6 +15,8 @@ After that, open the printed URL and complete setup in the browser wizard.
 
 For manual Compose/Portainer/CasaOS instructions, see `docs/INSTALL.md`.
 
+Installer defaults are user-writable (`$HOME/yesterdays-scoop` and `$HOME/yesterdays-scoop-data`) and are validated for writability before startup.
+
 ## Configuration ownership (installer vs GUI)
 
 **Installer / env-managed**
@@ -64,6 +66,12 @@ Normal operation is autonomous after setup, but service outages will surface as 
   8. Review and finish
 - Wizard state (`setup_completed`, `setup_last_step`) and selected settings are stored in DB.
 - Incomplete setup blocks normal browsing routes and redirects users to the wizard until completion.
+
+### First-run success criteria
+- Setup wizard loads at `/setup/1` without server 500s.
+- Admin account can be created/confirmed at step 3.
+- Completing step 8 queues bootstrap + pipeline tasks automatically.
+- `/health` shows pipeline/service progression and explicit degraded reasons if something is unavailable.
 
 ## Default deployment safety
 - The default Compose stack uses **separate PostgreSQL databases**:
@@ -145,6 +153,7 @@ X integration requires `x_api_bearer_token`.
 - miniflux retry count
 - scheduler health (beat-driven heartbeat task timestamp)
 - worker health (Celery worker heartbeat + control ping)
+- `degraded_reasons` list for quick diagnosis when `status=degraded`
 - last pipeline start/finish/success/stage
 - meilisearch
 - ollama
@@ -188,3 +197,11 @@ Use this checklist before calling the stack "usable":
 4. Stop and restart worker/beat containers and confirm `/health` recovers to `ok` automatically.
 5. Temporarily stop Ollama and verify summarizer fallback still produces non-empty cluster summaries.
 6. Temporarily stop Meilisearch and confirm pipeline keeps ingesting/clustering and reports `complete_warn` until search recovers.
+
+### Quick ingest verification
+1. Add at least one active feed in `/sources` (or keep seeded defaults).
+2. Run pipeline from `/admin`.
+3. Confirm:
+   - `articles` count grows,
+   - homepage shows populated clusters,
+   - `/search` returns matching articles/clusters.

@@ -48,6 +48,15 @@ def test_require_admin_rejects_non_admin_user():
     raise AssertionError("expected require_admin to reject non-admin users")
 
 
+def test_hash_and_verify_password_roundtrip():
+    raw = "Sup3r-Safe-Password!"
+    hashed = auth.hash_password(raw)
+
+    assert hashed != raw
+    assert auth.verify_password(raw, hashed) is True
+    assert auth.verify_password("wrong-password", hashed) is False
+
+
 def test_login_submit_sets_session_cookie(monkeypatch):
     import app.main as main
 

@@ -36,6 +36,16 @@ def test_setup_step2_blocks_if_database_check_fails(monkeypatch):
     assert "error=Database+must+be+healthy" in response.headers["location"]
 
 
+def test_setup_step1_advances_to_step2():
+    settings = SimpleNamespace(setup_completed=False, setup_last_step=1)
+    db = DummyDB(settings=settings)
+
+    response = main.setup_wizard_submit(step=1, request=object(), db=db)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/setup/2"
+
+
 def test_setup_step3_creates_admin_for_first_run(monkeypatch):
     settings = SimpleNamespace(setup_completed=False, setup_last_step=2)
     db = DummyDB(settings=settings, admin_user=None)
@@ -54,6 +64,44 @@ def test_setup_step3_creates_admin_for_first_run(monkeypatch):
     assert len(db.added) == 1
     assert db.added[0].username == "owner"
     assert db.added[0].hashed_password == "hashed::supersecret"
+
+
+def test_setup_step3_existing_admin_accepts_valid_current_password(monkeypatch):
+    settings = SimpleNamespace(setup_completed=False, setup_last_step=2)
+    admin_user = SimpleNamespace(username="admin", hashed_password="hashed", is_admin=True)
+    db = DummyDB(settings=settings, admin_user=admin_user)
+    monkeypatch.setattr(main, "verify_password", lambda raw, hashed: raw == "correct" and hashed == "hashed")
+
+    response = main.setup_wizard_submit(
+        step=3,
+        request=object(),
+        db=db,
+        admin_username="admin",
+        admin_password="",
+        current_password="correct",
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/setup/4"
+
+
+def test_setup_step3_existing_admin_rejects_invalid_current_password(monkeypatch):
+    settings = SimpleNamespace(setup_completed=False, setup_last_step=2)
+    admin_user = SimpleNamespace(username="admin", hashed_password="hashed", is_admin=True)
+    db = DummyDB(settings=settings, admin_user=admin_user)
+    monkeypatch.setattr(main, "verify_password", lambda _raw, _hashed: False)
+
+    response = main.setup_wizard_submit(
+        step=3,
+        request=object(),
+        db=db,
+        admin_username="admin",
+        admin_password="",
+        current_password="wrong",
+    )
+
+    assert response.status_code == 303
+    assert "Current+password+is+incorrect" in response.headers["location"]
 
 
 def test_setup_wizard_renders_step_one_template_without_crashing(monkeypatch):

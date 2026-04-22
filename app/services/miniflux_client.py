@@ -96,8 +96,15 @@ class MinifluxClient:
                 logger.info("Miniflux API-key creation endpoint unavailable; continuing with Basic auth (%s)", exc)
         return None
 
-    def get_entries(self, *, status: str = "all", limit: int = 200, after_entry_id: int | None = None, feed_id: int | None = None) -> list[MinifluxEntry]:
-        params = {"status": status, "direction": "asc", "limit": limit, "order": "id"}
+    def _fetch_entries_status(
+        self,
+        *,
+        status: str,
+        limit: int,
+        after_entry_id: int | None = None,
+        feed_id: int | None = None,
+    ) -> dict:
+        params: dict[str, int | str] = {"status": status, "limit": limit}
         if after_entry_id:
             params["after_entry_id"] = after_entry_id
         if feed_id:
@@ -105,18 +112,55 @@ class MinifluxClient:
 
         def _fetch():
             with httpx.Client(timeout=self.timeout) as client:
-                res = client.get(
-                    f"{self.base_url}/v1/entries",
-                    headers=self._headers(),
-                    params=params,
-                )
-                res.raise_for_status()
-                return res.json()
+                try:
+                    res = client.get(
+                        f"{self.base_url}/v1/entries",
+                        headers=self._headers(),
+                        params=params,
+                    )
+                    res.raise_for_status()
+                    return res.json()
+                except httpx.HTTPStatusError as exc:
+                    body = exc.response.text[:500] if exc.response is not None else ""
+                    logger.warning(
+                        "Miniflux entries request failed status=%s params=%s body=%s",
+                        exc.response.status_code if exc.response is not None else "unknown",
+                        params,
+                        body,
+                    )
+                    raise
 
-        payload = with_retries(_fetch, attempts=3, base_delay_seconds=0.5, logger=logger, operation="miniflux get_entries")
+        return with_retries(_fetch, attempts=3, base_delay_seconds=0.5, logger=logger, operation=f"miniflux get_entries status={status}")
+
+    def get_entries(
+        self,
+        *,
+        statuses: tuple[str, ...] = ("unread", "read"),
+        limit: int = 200,
+        after_entry_id: int | None = None,
+        feed_id: int | None = None,
+    ) -> list[MinifluxEntry]:
+        valid_statuses = {"read", "unread", "removed"}
+        requested_statuses = tuple(s for s in statuses if s in valid_statuses) or ("unread",)
+        payload_entries: list[dict] = []
+        seen_entry_ids: set[int] = set()
+        for status in requested_statuses:
+            payload = self._fetch_entries_status(
+                status=status,
+                limit=limit,
+                after_entry_id=after_entry_id,
+                feed_id=feed_id,
+            )
+            for item in payload.get("entries", []):
+                entry_id = item.get("id")
+                if isinstance(entry_id, int) and entry_id in seen_entry_ids:
+                    continue
+                if isinstance(entry_id, int):
+                    seen_entry_ids.add(entry_id)
+                payload_entries.append(item)
 
         entries: list[MinifluxEntry] = []
-        for item in payload.get("entries", []):
+        for item in payload_entries:
             entries.append(
                 MinifluxEntry(
                     id=item["id"],
@@ -130,7 +174,7 @@ class MinifluxClient:
                     published_at=datetime.fromisoformat(item["published_at"].replace("Z", "+00:00")),
                 )
             )
-        return entries
+        return sorted(entries, key=lambda entry: entry.id)
 
     def get_entries_with_latency(self, **kwargs) -> tuple[list[MinifluxEntry], float]:
         start = time.perf_counter()

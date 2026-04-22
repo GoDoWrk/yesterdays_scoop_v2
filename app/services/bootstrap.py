@@ -23,6 +23,7 @@ def bootstrap_data(db: Session) -> None:
         return
 
     _ensure_default_admin(db)
+
     seed_source_registry(db)
     attempt_miniflux_bootstrap(db, app_settings=app_settings, reason="startup")
 

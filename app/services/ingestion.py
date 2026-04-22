@@ -48,7 +48,7 @@ def ingest_from_miniflux(db: Session, *, limit: int = 250) -> dict:
 
         try:
             entries, latency_ms = client.get_entries_with_latency(
-                status="all",
+                statuses=("unread", "read"),
                 limit=min(limit, 120),
                 feed_id=source.miniflux_feed_id,
             )
@@ -96,12 +96,20 @@ def ingest_from_miniflux(db: Session, *, limit: int = 250) -> dict:
         except Exception as exc:
             _mark_source_fetch_failure(source)
             db.commit()
+            response_body = ""
+            status_code = None
+            if getattr(exc, "response", None) is not None:
+                status_code = getattr(exc.response, "status_code", None)
+                response_body = (getattr(exc.response, "text", "") or "")[:500]
             logger.warning(
-                "Source ingest failed: source=%s tier=%s failures=%s error=%s",
+                "Source ingest failed: source=%s feed_id=%s tier=%s failures=%s status=%s error=%s body=%s",
                 source.name,
+                source.miniflux_feed_id,
                 source.source_tier,
                 source.failure_count,
+                status_code,
                 exc,
+                response_body,
             )
 
     if settings.miniflux_mark_read_after_ingest and processed_entry_ids:
@@ -131,7 +139,7 @@ def _ingest_from_miniflux_legacy(db: Session, *, client: MinifluxClient, limit: 
     the full source-registry DB interface.
     """
     after_entry_id = _last_seen_miniflux_entry_id(db)
-    entries = client.get_entries(status="all", limit=limit, after_entry_id=after_entry_id)
+    entries = client.get_entries(statuses=("unread", "read"), limit=limit, after_entry_id=after_entry_id)
 
     inserted = 0
     inserted_article_ids: list[int] = []
