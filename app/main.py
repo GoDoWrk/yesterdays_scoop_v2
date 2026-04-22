@@ -1,7 +1,7 @@
 from pathlib import Path
 import logging
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlsplit, urlunsplit
 
 import json
 
@@ -172,6 +172,22 @@ def _dashboard_metrics(db: Session) -> dict:
     }
 
 
+
+def _safe_next_url(next_url: str | None) -> str:
+    candidate = (next_url or "").strip()
+    if not candidate:
+        return "/"
+
+    parts = urlsplit(candidate)
+    if parts.scheme or parts.netloc:
+        return "/"
+    if not parts.path.startswith("/") or parts.path.startswith("//"):
+        return "/"
+
+    return urlunsplit(("", "", parts.path, parts.query, ""))
+
+
+
 def _is_setup_completed(db: Session) -> bool:
     settings = db.scalar(select(AppSetting).limit(1))
     return bool(settings and settings.setup_completed)
@@ -183,7 +199,7 @@ def _is_setup_completed(db: Session) -> bool:
 def login_page(request: Request, db: Session = Depends(get_db)):
     if not _is_setup_completed(db):
         return RedirectResponse("/setup/1", status_code=303)
-    next_url = request.query_params.get("next") or "/"
+    next_url = _safe_next_url(request.query_params.get("next"))
     return templates.TemplateResponse(
         "login.html",
         {
@@ -204,15 +220,16 @@ def login_submit(
     password: str = Form(""),
     next_url: str = Form("/"),
 ):
+    safe_next_url = _safe_next_url(next_url)
     user = authenticate_user(db, username=username.strip(), password=password)
     if not user:
         return RedirectResponse(
-            f"/login?error=Invalid+username+or+password&next={quote_plus(next_url or '/')}",
+            f"/login?error=Invalid+username+or+password&next={quote_plus(safe_next_url)}",
             status_code=303,
         )
 
     token = manager.create_access_token(data={"sub": user.username})
-    response = RedirectResponse(next_url or "/", status_code=303)
+    response = RedirectResponse(safe_next_url, status_code=303)
     manager.set_cookie(response, token)
     return response
 

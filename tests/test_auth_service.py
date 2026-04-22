@@ -94,3 +94,46 @@ def test_logout_submit_clears_session_cookie(monkeypatch):
     assert response.status_code == 303
     assert response.headers["location"] == "/login?ok=Logged+out"
     assert "yscoop_session=" in response.headers.get("set-cookie", "")
+
+
+def test_login_submit_rejects_external_redirect(monkeypatch):
+    import app.main as main
+
+    user = SimpleNamespace(username="owner")
+    monkeypatch.setattr(main, "authenticate_user", lambda db, username, password: user)
+
+    class DummyManager:
+        cookie_name = "yscoop_session"
+
+        @staticmethod
+        def create_access_token(data):
+            return f"token::{data['sub']}"
+
+        @staticmethod
+        def set_cookie(response, token):
+            response.set_cookie("yscoop_session", token)
+
+    monkeypatch.setattr(main, "manager", DummyManager())
+
+    response = main.login_submit(db=object(), username="owner", password="secret", next_url="https://attacker.tld/phish")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+
+
+def test_login_page_sanitizes_next_redirect(monkeypatch):
+    import app.main as main
+
+    monkeypatch.setattr(main, "_is_setup_completed", lambda db: True)
+
+    class DummyTemplates:
+        @staticmethod
+        def TemplateResponse(_name, context):
+            return context
+
+    monkeypatch.setattr(main, "templates", DummyTemplates())
+
+    request = SimpleNamespace(query_params={"next": "//attacker.tld/evil"})
+    context = main.login_page(request=request, db=object())
+
+    assert context["next"] == "/"
