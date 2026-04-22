@@ -118,9 +118,12 @@ def _backfill_legacy_source_metadata(source_rows: list[dict[str, Any]]) -> None:
         if row.get("source_type") and row.get("topic") and row.get("geography"):
             continue
         inferred = infer_source_metadata(str(row.get("name") or ""), str(row.get("feed_url") or ""))
-        row.setdefault("source_type", str(inferred["source_type"]))
-        row.setdefault("topic", str(inferred["topic"]))
-        row.setdefault("geography", str(inferred["geography"]))
+        if not row.get("source_type"):
+            row["source_type"] = str(inferred["source_type"])
+        if not row.get("topic"):
+            row["topic"] = str(inferred["topic"])
+        if not row.get("geography"):
+            row["geography"] = str(inferred["geography"])
 
 
     _backfill_legacy_source_metadata(data["sources"])
