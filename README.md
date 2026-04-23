@@ -144,6 +144,87 @@ Enable via Settings:
 
 X integration requires `x_api_bearer_token`.
 
+## Operator/debug surface (`/admin`)
+The internal admin dashboard is now the primary observability surface for day-2 operations.
+
+It exposes:
+- total articles and total clusters
+- article ingest volume (1h / 24h)
+- clusters touched (1h / 24h)
+- per-stage run timestamps (`ingest`, `cluster`, `summarize`, `rank`)
+- queue visibility (`active`, `reserved`, `scheduled` Celery tasks)
+- pipeline run history table (per-run counts/status/errors)
+- stage event stream (`ingest`/`cluster`/`summarize`/`rank`/`index`) with durations and failures
+- trend graph for ingest volume vs stage errors across recent runs
+- recent enrichment failures (from `cluster_events`)
+- source health cues (`health_status`, failure count, freshness)
+- practical service health checks for DB, Redis/Celery, Miniflux, Meilisearch, and Ollama
+
+Use `/admin` first when a page looks stale or incomplete; it now makes backend uncertainty explicit instead of silent.
+
+## Story model in the UI
+### Cards = quick story snapshots
+Cards are intentionally compact and now only surface:
+- headline
+- one-line current state
+- one-line latest change
+- one-line why-it-matters
+- last updated time
+- status badge (`Developing`, `Active`, `Stabilizing`, `Concluded`)
+- source/update counts
+
+### Detail view = context payoff
+Opening a story now focuses on context:
+- Current state
+- Latest change
+- Why it matters
+- What to know
+- Timeline (chronological article updates)
+- Cluster events
+- Sources and corroboration
+
+### Story status definitions
+- **Developing**: very recent movement (typically within ~8h).
+- **Active**: still moving but no longer initial break (~8-36h).
+- **Stabilizing**: slower update cadence (~36-96h).
+- **Concluded**: long-tail updates only (>=96h) or archived state.
+
+### Explicit readiness/uncertainty states
+Cards and detail pages now label data maturity directly:
+- Processing
+- Awaiting summary
+- Awaiting clustering
+- Partial data available
+- AI generation failed
+- No recent updates
+- Ready
+
+No section should appear "finished" when the required data is unavailable.
+
+## AI fallback behavior
+If LLM generation is unavailable or fails:
+- **Current state** falls back to deterministic extractive text from attached articles.
+- **Latest change** falls back to a delta from the newest two attached updates.
+- **Why it matters** falls back to a concise deterministic sentence.
+- Fallback-oriented readiness labels are shown to the user.
+
+This keeps story pages usable without hiding model failures.
+
+## Demo/dev seed mode
+Load deterministic sample stories for UI evaluation independent of live ingestion/LLM health:
+
+```bash
+python scripts/seed_demo_data.py
+```
+
+The seed includes:
+- healthy/ready stories
+- partial/in-progress stories
+- AI-failed fallback stories
+- stale/concluded stories
+
+All demo records are prefixed with `demo-` slugs and are safe to reseed.
+
 ## Health/status
 `/health` reports:
 - database

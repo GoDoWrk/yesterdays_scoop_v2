@@ -12,14 +12,14 @@ from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import desc, func, select, text
+from sqlalchemy import asc, desc, func, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.logging import configure_logging
 from app.db.migrations import run_migrations
 from app.db.session import engine, get_db
-from app.models import AppSetting, Article, Cluster, ClusterEvent, ServiceState, SocialItem, Source, User
+from app.models import AppSetting, Article, Cluster, ClusterEvent, PipelineRun, PipelineStageEvent, ServiceState, SocialItem, Source, User
 from app.services.auth import authenticate_user, hash_password, manager, require_admin, require_user, verify_password
 from app.services.backup_restore import BackupValidationError, backup_bytes, restore_backup
 from app.services.bootstrap import bootstrap_data, ensure_app_settings
@@ -29,6 +29,7 @@ from app.services.meili import MeiliService
 from app.services.miniflux_client import MinifluxClient
 from app.services.ranking import looks_us_focused
 from app.services.social_context import split_social_sections
+from app.services.story_view import infer_readiness, infer_story_status, latest_change_line, one_line_current_state, story_status_badge, why_it_matters_line
 from app.tasks.celery_app import celery_app
 from app.tasks.jobs import retry_miniflux_bootstrap_task, run_pipeline_task
 
@@ -193,11 +194,15 @@ def _dashboard_metrics(db: Session) -> dict:
     one_hour_ago = now - timedelta(hours=1)
     day_ago = now - timedelta(hours=24)
 
+    total_articles = int(db.scalar(select(func.count(Article.id))) or 0)
+    total_clusters = int(db.scalar(select(func.count(Cluster.id))) or 0)
     articles_1h = int(db.scalar(select(func.count(Article.id)).where(Article.ingested_at >= one_hour_ago)) or 0)
     articles_24h = int(db.scalar(select(func.count(Article.id)).where(Article.ingested_at >= day_ago)) or 0)
     clusters_1h = int(db.scalar(select(func.count(Cluster.id)).where(Cluster.updated_at >= one_hour_ago)) or 0)
     clusters_24h = int(db.scalar(select(func.count(Cluster.id)).where(Cluster.updated_at >= day_ago)) or 0)
     return {
+        "total_articles": total_articles,
+        "total_clusters": total_clusters,
         "articles_1h": articles_1h,
         "articles_24h": articles_24h,
         "clusters_1h": clusters_1h,
@@ -205,7 +210,45 @@ def _dashboard_metrics(db: Session) -> dict:
     }
 
 
+def _queue_snapshot() -> dict:
+    snapshot = {"workers_online": False, "active": 0, "reserved": 0, "scheduled": 0, "error": None}
+    try:
+        inspector = celery_app.control.inspect(timeout=1.0)
+        active = inspector.active() or {}
+        reserved = inspector.reserved() or {}
+        scheduled = inspector.scheduled() or {}
+        snapshot["workers_online"] = bool(active or reserved or scheduled)
+        snapshot["active"] = sum(len(v or []) for v in active.values())
+        snapshot["reserved"] = sum(len(v or []) for v in reserved.values())
+        snapshot["scheduled"] = sum(len(v or []) for v in scheduled.values())
+    except Exception as exc:
+        snapshot["error"] = str(exc)
+    return snapshot
 
+
+def _story_snapshot(cluster: Cluster, articles: list[Article], latest_enrichment: ClusterEvent | None) -> dict:
+    story_status = infer_story_status(cluster, articles[0].published_at if articles and articles[0].published_at else None)
+    readiness = infer_readiness(cluster, len(articles), latest_enrichment)
+    current_state, current_fallback = one_line_current_state(cluster, articles)
+    latest_change, latest_fallback = latest_change_line(cluster, articles)
+    why_fallback_line = "Why this matters: this story remains relevant due to corroboration, recency, or direct impact signals."
+    why_text, why_fallback = why_it_matters_line(cluster, why_fallback_line)
+
+    return {
+        "cluster": cluster,
+        "headline": cluster.title,
+        "status": story_status,
+        "status_label": story_status_badge(story_status),
+        "readiness_state": readiness.state,
+        "readiness_reason": readiness.reason,
+        "current_state": current_state,
+        "current_state_fallback": current_fallback,
+        "latest_change": latest_change,
+        "latest_change_fallback": latest_fallback,
+        "why_it_matters": why_text,
+        "why_it_matters_fallback": why_fallback,
+        "update_count": len(cluster.what_changed or []),
+    }
 
 
 def _dispatch_task(task_callable, *, task_name: str) -> tuple[bool, str]:
@@ -316,6 +359,22 @@ def homepage(request: Request, db: Session = Depends(get_db), current_user=Depen
     settings = db.scalar(select(AppSetting).limit(1))
     region = ((settings.region if settings else "") or "").strip().lower()
     sections = _homepage_sections(db, region)
+    snapshots_by_slug: dict[str, dict] = {}
+    for cluster in {c.id: c for group in sections.values() for c in group}.values():
+        articles = db.scalars(
+            select(Article)
+            .where(Article.cluster_id == cluster.id)
+            .order_by(desc(Article.published_at), desc(Article.ingested_at))
+            .limit(2)
+        ).all()
+        latest_enrichment = db.scalar(
+            select(ClusterEvent)
+            .where(ClusterEvent.cluster_id == cluster.id, ClusterEvent.event_type == "enrichment_status")
+            .order_by(desc(ClusterEvent.created_at))
+            .limit(1)
+        )
+        snapshots_by_slug[cluster.slug] = _story_snapshot(cluster, articles, latest_enrichment)
+
     hero = sections["top_story_now"][0] if sections["top_story_now"] else None
     return templates.TemplateResponse(
         request,
@@ -324,6 +383,7 @@ def homepage(request: Request, db: Session = Depends(get_db), current_user=Depen
             "request": request,
             "hero": hero,
             "sections": sections,
+            "snapshots_by_slug": snapshots_by_slug,
             "title": "Daily Briefing",
             "current_user": current_user,
             "bootstrap_pending": not bool(settings and settings.miniflux_bootstrap_completed),
@@ -377,7 +437,8 @@ def cluster_detail(slug: str, request: Request, db: Session = Depends(get_db), c
     cluster = db.scalar(select(Cluster).where(Cluster.slug == slug))
     if not cluster:
         return RedirectResponse("/")
-    articles = db.scalars(select(Article).where(Article.cluster_id == cluster.id).order_by(desc(Article.published_at))).all()
+    articles = db.scalars(select(Article).where(Article.cluster_id == cluster.id).order_by(desc(Article.published_at), desc(Article.ingested_at))).all()
+    timeline_articles = list(reversed(articles))
     social_items = db.scalars(
         select(SocialItem).where(SocialItem.cluster_id == cluster.id).order_by(desc(SocialItem.created_at)).limit(20)
     ).all()
@@ -394,12 +455,26 @@ def cluster_detail(slug: str, request: Request, db: Session = Depends(get_db), c
         select(ClusterEvent)
         .where(ClusterEvent.cluster_id == cluster.id)
         .order_by(desc(ClusterEvent.created_at))
-        .limit(20)
+        .limit(30)
     ).all()
+    latest_enrichment = next((e for e in recent_events if e.event_type == "enrichment_status"), None)
     significant_events = [
-        e for e in recent_events
+        e for e in reversed(recent_events)
         if e.event_type in {"article_attached", "cluster_created", "enrichment_status"}
-    ][:10]
+    ][:14]
+    snapshot = _story_snapshot(cluster, articles[:2], latest_enrichment)
+    what_to_know = [
+        f"Story status: {snapshot['status_label']}.",
+        f"Supporting sources: {cluster.source_count}.",
+        f"Corroborating outlets: {cluster.corroboration_count or 0}.",
+        f"Freshness score: {cluster.freshness_score or 0:.2f}.",
+    ]
+    unresolved_questions = []
+    if snapshot["status"] in {"developing", "active"}:
+        unresolved_questions.append("What confirmation is still pending from primary or official sources?")
+    if not (cluster.what_changed or []):
+        unresolved_questions.append("What changed most recently has not been confirmed yet.")
+
     settings = db.scalar(select(AppSetting).limit(1))
     return templates.TemplateResponse(
         request,
@@ -407,11 +482,14 @@ def cluster_detail(slug: str, request: Request, db: Session = Depends(get_db), c
         {
             "request": request,
             "cluster": cluster,
-            "articles": articles,
+            "snapshot": snapshot,
+            "timeline_articles": timeline_articles,
             "official_responses": official_responses,
             "public_reaction": public_reaction,
             "source_breakdown": source_breakdown,
             "significant_events": significant_events,
+            "what_to_know": what_to_know,
+            "unresolved_questions": unresolved_questions,
             "title": cluster.title,
             "current_user": current_user,
             "bootstrap_pending": not bool(settings and settings.miniflux_bootstrap_completed),
@@ -602,6 +680,28 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db), current_use
         .order_by(desc(ClusterEvent.created_at))
         .limit(25)
     ).all()
+    recent_failures = [
+        e for e in recent_enrichment
+        if isinstance(e.details, dict) and e.details.get("stage") == "failed"
+    ][:8]
+    source_health = db.scalars(
+        select(Source).order_by(asc(Source.health_status), desc(Source.failure_count), asc(Source.source_tier)).limit(15)
+    ).all()
+    queue_snapshot = _queue_snapshot()
+    recent_runs = db.scalars(select(PipelineRun).order_by(desc(PipelineRun.started_at)).limit(24)).all()
+    recent_stage_events = db.scalars(
+        select(PipelineStageEvent).order_by(desc(PipelineStageEvent.started_at)).limit(80)
+    ).all()
+    trend_points = []
+    for idx, run in enumerate(reversed(recent_runs)):
+        trend_points.append({
+            "x": idx,
+            "label": run.started_at.isoformat() if run.started_at else f"run-{run.id}",
+            "ingested": run.ingested_count or 0,
+            "errors": run.stage_error_count or 0,
+            "status": run.status,
+        })
+    trend_payload = json.dumps(trend_points)
     return templates.TemplateResponse(
         request,
         "admin_dashboard.html",
@@ -615,6 +715,12 @@ def admin_dashboard(request: Request, db: Session = Depends(get_db), current_use
             "svc_state": svc_state,
             "metrics": metrics,
             "recent_enrichment": recent_enrichment,
+            "recent_failures": recent_failures,
+            "source_health": source_health,
+            "queue_snapshot": queue_snapshot,
+            "recent_runs": recent_runs,
+            "recent_stage_events": recent_stage_events,
+            "trend_payload": trend_payload,
             "queue_error": request.query_params.get("queue_error"),
             "queue_ok": request.query_params.get("queue_ok"),
         },
